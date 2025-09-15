@@ -2,145 +2,110 @@
 import os
 import streamlit as st
 from dotenv import load_dotenv
-
-# OpenAI official SDK
-from openai import OpenAI
-
-# LangChain / LangGraph
-from langchain_openai import ChatOpenAI
-from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain_community.utilities import SQLDatabase
-from langchain_experimental.sql import SQLDatabaseChain
-from langchain.agents import initialize_agent, AgentType, Tool
-from langchain.memory import ConversationBufferMemory
-
 import pandas as pd
 
-# --- Load env ---
+# LangChain & Agents
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
+from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_experimental.sql import SQLDatabaseChain
+from langchain.utilities import SQLDatabase
+
+# Load environment
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# --- Patch API KEY untuk sk-proj ---
-if OPENAI_API_KEY and OPENAI_API_KEY.startswith("sk-proj-"):
-    if not OPENAI_PROJECT_ID:
-        st.error("❌ OPENAI_PROJECT_ID wajib diset di .env jika memakai sk-proj- API key!")
+# --- Patch: handle sk-proj API key ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+if OPENAI_API_KEY.startswith("sk-proj-") and not os.getenv("OPENAI_PROJECT_ID"):
+    # coba ambil dari .env
+    project_id = os.getenv("OPENAI_PROJECT_ID", "")
+    if not project_id:
+        st.error("❌ OPENAI_PROJECT_ID harus diset di .env jika pakai sk-proj- key")
     else:
-        os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-        os.environ["OPENAI_PROJECT_ID"] = OPENAI_PROJECT_ID
+        os.environ["OPENAI_PROJECT_ID"] = project_id
 
-# --- OpenAI official client test ---
-client = None
-if OPENAI_API_KEY:
-    try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        if OPENAI_PROJECT_ID:
-            client = OpenAI(api_key=OPENAI_API_KEY, project=OPENAI_PROJECT_ID)
-    except Exception as e:
-        st.error(f"Gagal inisialisasi OpenAI client: {e}")
+# --- Select LLM provider ---
+def get_llm():
+    if os.getenv("OPENAI_API_KEY"):
+        st.sidebar.success("✅ Using OpenAI")
+        return ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    elif os.getenv("GOOGLE_API_KEY"):
+        st.sidebar.success("✅ Using Google Gemini")
+        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    elif os.getenv("GROQ_API_KEY"):
+        st.sidebar.success("✅ Using Groq LLaMA/Mixtral")
+        return ChatGroq(model="llama-3.1-70b-versatile", temperature=0)
+    else:
+        st.sidebar.error("❌ No valid API key found")
+        return None
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Chatbot Data Analysis", layout="wide")
-st.title("🤖 Chatbot Data Analysis (Python Agent + MySQL)")
+# --- UI ---
+st.set_page_config(page_title="LangGraph Multi-Agent", layout="wide")
+st.title("🤖 LangGraph Chatbot with Python + MySQL Agent")
 
-st.sidebar.header("⚙️ Pengaturan")
-mode = st.sidebar.radio("Pilih Mode Analisis", ["Python Agent", "MySQL Agent"])
+llm = get_llm()
+if not llm:
+    st.stop()
 
-uploaded_files = st.sidebar.file_uploader(
-    "Upload Dataset (CSV/XLSX) – bisa multi-file",
-    type=["csv", "xlsx"],
-    accept_multiple_files=True,
+# --- Multi-file upload (CSV/XLSX) ---
+uploaded_files = st.file_uploader(
+    "Upload CSV/XLSX files", type=["csv", "xlsx"], accept_multiple_files=True
 )
-sql_uri = st.sidebar.text_input("MySQL URI", value="mysql+pymysql://user:pass@localhost:3306/dbname")
 
-# --- LLM setup ---
-llm = None
-if OPENAI_API_KEY:
-    llm = ChatOpenAI(
-        openai_api_key=OPENAI_API_KEY,
-        model=MODEL,
-        temperature=0,
-        streaming=True,
-    )
+dfs = {}
+if uploaded_files:
+    for file in uploaded_files:
+        try:
+            if file.name.endswith(".csv"):
+                dfs[file.name] = pd.read_csv(file)
+            elif file.name.endswith(".xlsx"):
+                dfs[file.name] = pd.read_excel(file)
+        except Exception as e:
+            st.error(f"⚠️ Failed to load {file.name}: {e}")
 
-# --- Memory ---
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+if dfs:
+    st.write("📂 Loaded datasets:", list(dfs.keys()))
+    selected_file = st.selectbox("Pick a dataset", list(dfs.keys()))
+    df = dfs[selected_file]
+    st.dataframe(df.head())
 
-# --- Tools ---
-tools = []
-
-if mode == "Python Agent":
-    if uploaded_files:
-        dfs = {}
-        for uploaded_file in uploaded_files:
-            try:
-                if uploaded_file.name.endswith(".csv"):
-                    df = pd.read_csv(uploaded_file)
-                elif uploaded_file.name.endswith(".xlsx"):
-                    df = pd.read_excel(uploaded_file)
-                else:
-                    raise ValueError("Format file tidak didukung")
-
-                dfs[uploaded_file.name] = df
-
-                # Buat agent dataframe
-                agent_df = create_pandas_dataframe_agent(
-                    llm,
-                    df,
-                    verbose=True,
-                    allow_dangerous_code=True,  # patch penting
-                )
-                tools.append(
-                    Tool(
-                        name=f"Dataframe_{uploaded_file.name}",
-                        func=agent_df.run,
-                        description=f"Analisis dataset {uploaded_file.name}",
-                    )
-                )
-                st.success(f"✅ {uploaded_file.name} berhasil dimuat.")
-            except Exception as e:
-                st.error(f"Gagal membaca {uploaded_file.name}: {e}")
-    else:
-        st.info("Upload minimal 1 file CSV/XLSX untuk analisis.")
-
-elif mode == "MySQL Agent":
-    try:
-        db = SQLDatabase.from_uri(sql_uri)
-        db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
-        tools.append(
-            Tool(
-                name="MySQL",
-                func=db_chain.run,
-                description="Jalankan query analisis pada database MySQL",
-            )
+    # Python Agent
+    if st.checkbox("Enable Python Agent for Data Analysis"):
+        agent_df = create_pandas_dataframe_agent(
+            llm, df, verbose=True, allow_dangerous_code=True
         )
-        st.success("✅ Koneksi MySQL berhasil.")
-    except Exception as e:
-        st.error(f"Gagal konek MySQL: {e}")
-
-# --- Agent ---
-agent = None
-if tools and llm:
-    agent = initialize_agent(
-        tools=tools,
-        llm=llm,
-        agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
-        memory=memory,
-        verbose=True,
-        handle_parsing_errors=True,
-    )
-
-# --- Chat UI ---
-if agent:
-    st.subheader("💬 Chat dengan Data / Database")
-    user_input = st.chat_input("Ketik pertanyaan...")
-    if user_input:
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        with st.chat_message("assistant"):
+        query = st.text_input("Ask about the dataset:")
+        if query:
             try:
-                response = agent.run(user_input)
-                st.markdown(response)
+                response = agent_df.run(query)
+                st.success(response)
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"⚠️ Agent error: {e}")
+
+# --- MySQL Agent ---
+if st.checkbox("Enable MySQL Agent"):
+    mysql_uri = st.text_input("MySQL URI (e.g. mysql+pymysql://user:pass@localhost/db)")
+    if mysql_uri:
+        try:
+            db = SQLDatabase.from_uri(mysql_uri)
+            db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
+            sql_query = st.text_input("Ask about the database:")
+            if sql_query:
+                try:
+                    result = db_chain.run(sql_query)
+                    st.success(result)
+                except Exception as e:
+                    st.error(f"⚠️ SQL Agent error: {e}")
+        except Exception as e:
+            st.error(f"⚠️ DB connection error: {e}")
+
+# --- General Chatbot ---
+st.subheader("💬 General Chat")
+user_input = st.text_input("Ask me anything:")
+if user_input:
+    try:
+        response = llm.invoke(user_input)
+        st.info(response.content)
+    except Exception as e:
+        st.error(f"⚠️ Chat error: {e}")
