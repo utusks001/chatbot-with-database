@@ -1,0 +1,21 @@
+streamlit
+python-dotenv
+PyPDF2
+python-docx
+python-pptx
+langchain
+langgraph
+langsmith
+langchain-community
+langchain-google-genai
+sentence-transformers
+langchain-groq
+faiss-cpu
+Pillow
+requests
+xlrd==1.2.0   # untuk .xls (versi baru xlrd drop dukungan xlsx)
+openpyxl
+pandas>=1.0
+matplotlib
+seaborn
+langchain
