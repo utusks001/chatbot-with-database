@@ -1,4 +1,4 @@
-🤖 Gemini + Groq Chatbot — Multi-files + OCR + LangGraph + LangSmith
+# 🤖 Gemini + Groq Chatbot — Multi-files + OCR + LangGraph + LangSmith
 
 Chatbot berbasis LangChain Graph (LangGraph) dengan LangSmith untuk observabilitas dan LLMOps.
 Mendukung upload banyak file (PDF, TXT, DOCX, PPTX, Images) dengan OCR.Space untuk ekstraksi teks dari gambar.
