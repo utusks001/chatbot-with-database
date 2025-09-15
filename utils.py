@@ -24,6 +24,9 @@ def detect_column_types(df):
     return numeric_cols, categorical_cols
 
 def chunk_dataframe(df, chunk_size=5000):
+    """
+    Membagi DataFrame menjadi list DataFrame kecil untuk RAG
+    """
     chunks = []
     for i in range(0, len(df), chunk_size):
         chunks.append(df.iloc[i:i+chunk_size])
