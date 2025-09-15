@@ -30,9 +30,9 @@ openpyxl
 plotly
 matplotlib
 seaborn
-langchain
 faiss-cpu
 tqdm
 langchain-experimental>=0.0.57
 langchain-openai>=0.1.0
 langsmith>=0.1.0
+langchain==0.1.5
