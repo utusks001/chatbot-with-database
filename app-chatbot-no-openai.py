@@ -6,10 +6,10 @@ import plotly.express as px
 from langchain.chat_models import ChatOpenAI
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
-from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.schema import Document
 from langsmith import Client
+import openai
 from dotenv import load_dotenv
 
 # --- Load environment variables ---
@@ -19,8 +19,9 @@ GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
 
-# --- Pastikan embeddings membaca API Key dari environment ---
+# --- Pastikan OpenAI API Key untuk embeddings manual ---
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+openai.api_key = OPENAI_API_KEY
 
 st.set_page_config(page_title="Ultra-Interactive Data Chatbot", layout="wide")
 
@@ -57,16 +58,25 @@ if uploaded_file:
     st.write(f"**Kolom Numerik:** {numeric_cols}")
     st.write(f"**Kolom Kategori:** {categorical_cols}")
 
-    # --- RAG + chunking ---
+    # --- RAG + chunking manual embeddings ---
     if "vectorstore" not in st.session_state:
         all_docs = []
         chunks = chunk_dataframe(df, chunk_size=5000)
-        embeddings = OpenAIEmbeddings()  # <--- default constructor fix pydantic_core
         for c in chunks:
             records = c.to_dict(orient='records')
             docs = [Document(page_content=str(r)) for r in records]
             all_docs.extend(docs)
-        st.session_state.vectorstore = FAISS.from_documents(all_docs, embeddings)
+
+        # --- Generate embeddings manual via OpenAI API ---
+        def get_embeddings(texts):
+            response = openai.Embedding.create(
+                input=texts,
+                model="text-embedding-3-small"
+            )
+            return [d['embedding'] for d in response['data']]
+
+        embeddings_vectors = get_embeddings([d.page_content for d in all_docs])
+        st.session_state.vectorstore = FAISS.from_texts([d.page_content for d in all_docs], embeddings_vectors)
 
     # --- Setup LLM ---
     if provider == "OpenAI GPT-4":
