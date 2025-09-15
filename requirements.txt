@@ -12,7 +12,6 @@ sentence-transformers
 langchain-experimental
 langchain-openai
 langchain-groq
-faiss-cpu
 Pillow
 requests
 xlrd==1.2.0   # untuk .xls (versi baru xlrd drop dukungan xlsx)
