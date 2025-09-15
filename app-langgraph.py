@@ -1,24 +1,17 @@
 # app-langgraph.py 
 import os
-from dotenv import load_dotenv
 import streamlit as st
-import pandas as pd
-import tempfile
-from typing import Optional
+from dotenv import load_dotenv
 
-
-from langchain import OpenAI
-from langchain.agents import initialize_agent, Tool, AgentType
-from langchain.agents.agent_toolkits import create_pandas_dataframe_agent
-from langchain.tools.python.tool import PythonREPLTool
+# LangChain / LangGraph imports
+from langchain_openai import ChatOpenAI
+from langchain_experimental.tools import PythonREPLTool
+from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_community.utilities import SQLDatabase
+from langchain_experimental.sql import SQLDatabaseChain
+from langchain.agents import initialize_agent, AgentType
 from langchain.memory import ConversationBufferMemory
-from langchain.chains import SQLDatabaseChain
-from langchain.sql_database import SQLDatabase
-
-
-# LangSmith tracer
-from langchain.callbacks import LangsmithTracer
-
+import pandas as pd
 
 # --- Load environment ---
 load_dotenv()
@@ -26,55 +19,82 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-
 if not OPENAI_API_KEY:
-st.warning("OPENAI_API_KEY belum ditemukan di .env — agent tidak akan bekerja tanpa API key.")
+    st.warning(
+        "OPENAI_API_KEY belum ditemukan di .env — agent tidak akan bekerja tanpa API key."
+    )
 
+if not LANGSMITH_API_KEY:
+    st.info(
+        "LANGSMITH_API_KEY belum ditemukan di .env — logging/observability ke LangSmith akan dinonaktifkan."
+    )
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Chatbot Data Analysis (LangGraph)", layout="wide")
-st.title("🤖 Chatbot Data Analysis — LangGraph (stateful)")
+st.set_page_config(page_title="Chatbot Data Analysis", layout="wide")
+st.title("🤖 Chatbot Data Analysis dengan LangGraph + LangSmith")
 
+st.sidebar.header("Pengaturan")
+mode = st.sidebar.radio("Pilih Mode Analisis", ["Python Agent", "SQL Agent"])
 
-col1, col2 = st.columns([2, 1])
+uploaded_file = st.sidebar.file_uploader("Upload CSV untuk Analisis (mode Python)", type=["csv"])
+sql_uri = st.sidebar.text_input("SQLite URI untuk SQL Agent", value="sqlite:///sample.db")
 
+# --- LLM setup ---
+llm = ChatOpenAI(
+    openai_api_key=OPENAI_API_KEY,
+    model=MODEL,
+    temperature=0,
+    streaming=True,
+)
 
-with col2:
-st.header("Settings")
-st.text_input("OpenAI API Key", value=OPENAI_API_KEY or "", key="_openai_key", type="password")
-st.text_input("LangSmith API Key (optional)", value=LANGSMITH_API_KEY or "", key="_langsmith_key", type="password")
-st.selectbox("Mode (toolset)", ["Python Agent", "SQL Agent"], key="mode_select")
-reset = st.button("Reset Conversation")
+# --- Memory ---
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
+# --- Tools ---
+tools = []
 
-with col1:
-st.header("Upload / Data Source")
-uploaded_file = st.file_uploader("Upload CSV / Excel (untuk Python Agent)", type=["csv", "xlsx"])
-uploaded_db = st.file_uploader("Upload SQLite DB (untuk SQL Agent)", type=["db", "sqlite"])
+if mode == "Python Agent":
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        pandas_agent = create_pandas_dataframe_agent(llm, df, verbose=True, handle_parsing_errors=True)
+        tools.append(PythonREPLTool())
+        tools.extend(pandas_agent.tools)
+        st.success("CSV berhasil dimuat, siap untuk analisis dengan Python Agent.")
+    else:
+        st.warning("Upload file CSV untuk mulai analisis dengan Python Agent.")
 
+if mode == "SQL Agent":
+    try:
+        db = SQLDatabase.from_uri(sql_uri)
+        db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
+        tools.append(db_chain)
+        st.success("Koneksi database SQL berhasil.")
+    except Exception as e:
+        st.error(f"Gagal konek ke database: {e}")
 
-# --- LLM & tracing setup ---
-llm_kwargs = {"temperature": 0}
-
-
-if OPENAI_API_KEY:
-llm = OpenAI(api_key=OPENAI_API_KEY, model_name=MODEL, **llm_kwargs)
+# --- Agent ---
+if tools:
+    agent = initialize_agent(
+        tools=tools,
+        llm=llm,
+        agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
+        memory=memory,
+        verbose=True,
+        handle_parsing_errors=True,
+    )
 else:
-llm = OpenAI(api_key=None, model_name=MODEL, **llm_kwargs) # will error if called
+    agent = None
 
-
-tracer = None
-if LANGSMITH_API_KEY:
-tracer = LangsmithTracer(project_name="chatbot-data-analysis", api_key=LANGSMITH_API_KEY)
-st.sidebar.success("LangSmith tracing enabled")
-else:
-st.sidebar.info("LangSmith disabled — set LANGSMITH_API_KEY in .env to enable")
-
-
-# Attach tracer if available
-callbacks = [tracer] if tracer else []
-
-
-# --- Conversation memory (stateful) ---
-if "memory" not in st.session_state:
-st.write([t.name for t in tools])
+# --- Chat UI ---
+if agent:
+    st.subheader("💬 Chat dengan Data Anda")
+    user_input = st.chat_input("Ketik pertanyaan Anda...")
+    if user_input:
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        with st.chat_message("assistant"):
+            try:
+                response = agent.run(user_input)
+                st.markdown(response)
+            except Exception as e:
+                st.error(f"Error: {e}")
