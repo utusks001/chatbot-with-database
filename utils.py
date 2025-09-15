@@ -11,7 +11,9 @@ def load_excel(uploaded_file):
     Returns:
         dict: {sheet_name: dataframe}
     """
-    if uploaded_file.name.endswith('.csv'):
+    filename = uploaded_file.name  # gunakan nama file untuk cek ekstensi
+
+    if filename.endswith('.csv'):
         # CSV
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
         df = pd.read_csv(stringio)
