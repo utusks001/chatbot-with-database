@@ -4,7 +4,8 @@ python-pptx
 langgraph
 langchain-google-genai
 langchain-groq
-openai>=1.40.0
+# openai>=1.40.0
+openai
 langchain-core
 Pillow
 requests
@@ -37,6 +38,7 @@ langchain-experimental>=0.0.57
 langchain-openai>=0.1.0
 # langsmith>=0.1.0
 langsmith
+streamlit-chat
 langchain
 # langchain==0.1.5
 sentence-transformers
