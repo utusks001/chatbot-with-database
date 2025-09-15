@@ -20,15 +20,22 @@ LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
 
 st.set_page_config(page_title="Ultra-Interactive Data Chatbot", layout="wide")
 
-# --- Sidebar ---
+# --- Sidebar: Chat History ---
 st.sidebar.title("Riwayat Chat")
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-provider = st.sidebar.selectbox("Pilih LLM Provider", ["OpenAI GPT-4", "Google Gemini 2.5 Flash", "GROQ LLaMA 3.3 70B", "Langsmith"])
+# --- Sidebar: LLM Provider ---
+provider = st.sidebar.selectbox(
+    "Pilih LLM Provider",
+    ["OpenAI GPT-4", "Google Gemini 2.5 Flash", "GROQ LLaMA 3.3 70B", "Langsmith"]
+)
+
+# --- Sidebar: File Uploader ---
 uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
 
 if uploaded_file:
+    # --- Load data dari UploadedFile ---
     sheets = load_excel(uploaded_file)
     sheet_names = list(sheets.keys())
     selected_sheet = st.selectbox("Pilih Sheet", sheet_names)
@@ -85,7 +92,10 @@ if uploaded_file:
         Buat kode Python Plotly atau Pivot Table sesuai pertanyaan.
         Sertakan filter dropdown untuk kolom agar chart interaktif.
         """
-        chain = LLMChain(llm=llm, prompt=PromptTemplate(template="{input}", input_variables=["input"]))
+        chain = LLMChain(
+            llm=llm,
+            prompt=PromptTemplate(template="{input}", input_variables=["input"])
+        )
         response = chain.run(prompt_template)
 
         # --- Simpan chat history ---
