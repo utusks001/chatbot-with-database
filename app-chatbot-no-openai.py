@@ -5,29 +5,26 @@ import plotly.express as px
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain.schema import Document
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from sentence_transformers import SentenceTransformer
 from langchain.chat_models import ChatOpenAI
-from langsmith import Client  # Hanya import Client, Run diganti sesuai API terbaru
+from langsmith import Client
 
 st.set_page_config(page_title="Advanced RAG Data Chatbot", layout="wide")
 
-# --- Sidebar: Chat History ---
+# --- Sidebar ---
 st.sidebar.title("Riwayat Chat")
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# --- Sidebar: LLM Provider ---
 provider = st.sidebar.selectbox(
     "Pilih LLM Provider",
     ["Google Gemini 2.5 Flash", "GROQ LLaMA 3.3 70B", "Langsmith", "HuggingFace-local"]
 )
 
-# --- Sidebar: File Uploader ---
 uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
 
-# --- Langsmith client ---
-st.sidebar.markdown("Langsmith LLMOps")
+# --- Langsmith LLMOps ---
 LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
 langsmith_client = Client(api_key=LANGSMITH_API_KEY)
 
@@ -61,9 +58,13 @@ if uploaded_file:
             all_docs.extend(docs)
 
         hf_model = SentenceTransformer('all-MiniLM-L6-v2')
-        embeddings_vectors = hf_model.encode([d.page_content for d in all_docs], convert_to_numpy=True)
-        st.session_state.vectorstore = FAISS.from_embeddings(embeddings_vectors, all_docs)
-        st.session_state.vectorstore_version = 1  # versioning
+
+        # --- FAISS fixed: from_documents dengan embedding callable ---
+        st.session_state.vectorstore = FAISS.from_documents(
+            documents=all_docs,
+            embedding=hf_model.encode
+        )
+        st.session_state.vectorstore_version = 1
 
     # --- Setup LLM ---
     if provider == "HuggingFace-local":
@@ -82,18 +83,18 @@ if uploaded_file:
         context_text = "\n".join([d.page_content for d in docs])
 
         prompt_template = f"""
-        Kamu adalah asisten analisis data ultra-interaktif.
-        Data sheet '{selected_sheet}':
-        {context_text}
+Kamu adalah asisten analisis data ultra-interaktif.
+Data sheet '{selected_sheet}':
+{context_text}
 
-        Berdasarkan data ini, deteksi tipe plot terbaik (scatter, line, bar, histogram, pivot) untuk menjawab pertanyaan:
-        {user_input}
+Berdasarkan data ini, deteksi tipe plot terbaik (scatter, line, bar, histogram, pivot) untuk menjawab pertanyaan:
+{user_input}
 
-        Buat kode Python Plotly atau Pivot Table sesuai pertanyaan.
-        Sertakan filter dropdown untuk kolom agar chart interaktif.
-        """
+Buat kode Python Plotly atau Pivot Table sesuai pertanyaan.
+Sertakan filter dropdown untuk kolom agar chart interaktif.
+"""
 
-        # --- Langsmith LLMOps Run sesuai API terbaru ---
+        # --- Langsmith LLMOps run terbaru ---
         run = langsmith_client.runs.create(
             name="AdvancedRAGQuery",
             description="Query data sheet dengan Advanced RAG",
