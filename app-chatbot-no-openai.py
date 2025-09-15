@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 
 # --- Load environment variables ---
 load_dotenv()
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
@@ -35,7 +36,7 @@ provider = st.sidebar.selectbox(
 uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
 
 if uploaded_file:
-    # --- Load data dari UploadedFile ---
+    # --- Load data ---
     try:
         sheets = load_excel(uploaded_file)
     except Exception as e:
@@ -53,20 +54,20 @@ if uploaded_file:
     st.write(f"**Kolom Numerik:** {numeric_cols}")
     st.write(f"**Kolom Kategori:** {categorical_cols}")
 
-    # --- Setup RAG + chunking untuk dataset besar ---
+    # --- RAG + chunking ---
     if "vectorstore" not in st.session_state:
         all_docs = []
         chunks = chunk_dataframe(df, chunk_size=5000)
-        embeddings = OpenAIEmbeddings(openai_api_key=GEMINI_API_KEY)
+        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)  # <--- pakai OPENAI_API_KEY
         for c in chunks:
             records = c.to_dict(orient='records')
             docs = [Document(page_content=str(r)) for r in records]
             all_docs.extend(docs)
         st.session_state.vectorstore = FAISS.from_documents(all_docs, embeddings)
 
-    # --- Setup LLM berdasarkan provider ---
+    # --- Setup LLM ---
     if provider == "OpenAI GPT-4":
-        llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=GEMINI_API_KEY)
+        llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=OPENAI_API_KEY)
     elif provider == "Google Gemini 2.5 Flash":
         llm = ChatOpenAI(model_name="gemini-2.5", temperature=0.2, openai_api_key=GOOGLE_API_KEY)
     elif provider == "GROQ LLaMA 3.3 70B":
@@ -82,7 +83,7 @@ if uploaded_file:
     user_input = st.text_input("Masukkan pertanyaan anda:")
 
     if user_input:
-        # --- RAG similarity search ---
+        # --- Similarity search ---
         docs = st.session_state.vectorstore.similarity_search(user_input, k=3)
         context_text = "\n".join([d.page_content for d in docs])
 
@@ -109,14 +110,14 @@ if uploaded_file:
         st.write("### Kode yang di-generate Chatbot")
         st.code(response, language="python")
 
-        # --- Execute kode secara aman ---
+        # --- Execute kode ---
         try:
             local_vars = {"df": df, "px": px, "st": st, "pd": pd}
             exec(response, {}, local_vars)
         except Exception as e:
             st.error(f"Error menjalankan kode: {e}")
 
-    # --- Tampilkan Chat History di Sidebar ---
+    # --- Tampilkan Chat History ---
     st.sidebar.markdown("### Riwayat Chat")
     for i, (q, a) in enumerate(st.session_state.chat_history[::-1]):
         st.sidebar.markdown(f"**Q{i+1}:** {q}")
