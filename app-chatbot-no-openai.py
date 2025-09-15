@@ -1,150 +1,107 @@
-import os
 import streamlit as st
-from dotenv import load_dotenv
+from utils import load_excel, detect_column_types, suggest_visualizations
 import pandas as pd
+import plotly.express as px
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.schema import Document
+from langsmith import Client
+from dotenv import load_dotenv
+import os
 
-# LangChain
-from langchain_experimental.tools import PythonREPLTool
-from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain_community.utilities import SQLDatabase
-from langchain_experimental.sql import SQLDatabaseChain
-from langchain.agents import initialize_agent, AgentType
-from langchain.memory import ConversationBufferMemory
-
-# LLM Providers
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
-
-# --- Load environment ---
+# --- Load env ---
 load_dotenv()
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 
-# Default keys from .env
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+st.set_page_config(page_title="Advanced Data Analysis Chatbot", layout="wide")
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Chatbot Multiprovider", layout="wide")
-st.title("🤖 Chatbot Multiprovider (Google Gemini + Groq fallback)")
+# --- Sidebar Chat History ---
+st.sidebar.title("Riwayat Chat")
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-st.sidebar.header("⚙️ Pengaturan Provider")
-provider_mode = st.sidebar.radio(
-    "Pilih Provider",
-    ["Auto (Google→Groq)", "Google Gemini", "Groq"]
-)
+# --- File Upload ---
+uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
+if uploaded_file:
+    sheets = load_excel(uploaded_file)
+    sheet_names = list(sheets.keys())
+    selected_sheet = st.selectbox("Pilih Sheet", sheet_names)
+    df = sheets[selected_sheet]
 
-# Manual API key input
-if provider_mode in ["Google Gemini", "Auto (Google→Groq)"]:
-    GOOGLE_API_KEY = st.sidebar.text_input("🔑 Google API Key", value=GOOGLE_API_KEY, type="password")
+    st.write("### Preview Data")
+    st.dataframe(df.head())
 
-if provider_mode in ["Groq", "Auto (Google→Groq)"]:
-    GROQ_API_KEY = st.sidebar.text_input("🔑 Groq API Key", value=GROQ_API_KEY, type="password")
+    numeric_cols, categorical_cols = detect_column_types(df)
+    st.write(f"**Kolom Numerik:** {numeric_cols}")
+    st.write(f"**Kolom Kategori:** {categorical_cols}")
 
-mode = st.sidebar.radio("Mode Analisis", ["Python Agent", "SQL Agent"])
-uploaded_files = st.sidebar.file_uploader(
-    "Upload dataset (CSV/XLSX, multi-file)", type=["csv", "xlsx"], accept_multiple_files=True
-)
-sql_uri = st.sidebar.text_input("MySQL/SQLite URI", value="sqlite:///sample.db")
+    st.write("### Rekomendasi Visualisasi")
+    vis_suggestions = suggest_visualizations(df)
+    for s in vis_suggestions:
+        st.write(f"- {s}")
 
-# --- Memory ---
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    # --- Rekomendasi Visualisasi Interaktif ---
+    st.write("### Visualisasi Interaktif")
+    if numeric_cols:
+        col = st.selectbox("Pilih kolom numerik untuk histogram", numeric_cols)
+        fig = px.histogram(df, x=col)
+        st.plotly_chart(fig)
 
-# --- Provider Selection ---
-def get_llm():
-    if provider_mode == "Google Gemini":
-        if not GOOGLE_API_KEY:
-            st.error("Google API Key wajib diisi!")
-            return None
-        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY, temperature=0)
+    if numeric_cols and categorical_cols:
+        x_col = st.selectbox("Kolom kategori (x-axis)", categorical_cols)
+        y_col = st.selectbox("Kolom numerik (y-axis)", numeric_cols)
+        fig2 = px.box(df, x=x_col, y=y_col)
+        st.plotly_chart(fig2)
 
-    elif provider_mode == "Groq":
-        if not GROQ_API_KEY:
-            st.error("Groq API Key wajib diisi!")
-            return None
-        return ChatGroq(model="llama-3.3-70b-versati", api_key=GROQ_API_KEY, temperature=0)
-
-    elif provider_mode == "Auto (Google→Groq)":
-        # Try Google first
-        if GOOGLE_API_KEY:
-            try:
-                return ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY, temperature=0)
-            except Exception as e:
-                if "429" in str(e):
-                    st.warning("⚠️ Google quota habis, otomatis switch ke Groq...")
-                else:
-                    st.error(f"Google API error: {e}")
-        # Fallback Groq
-        if GROQ_API_KEY:
-            return ChatGroq(model="llama-3.3-70b-versati", api_key=GROQ_API_KEY, temperature=0)
-        else:
-            st.error("Groq API Key belum diisi.")
-            return None
-
-llm = get_llm()
-
-# --- Tools setup ---
-tools = []
-
-if mode == "Python Agent":
-    if uploaded_files:
-        try:
-            dfs = {}
-            for file in uploaded_files:
-                if file.name.endswith(".csv"):
-                    dfs[file.name] = pd.read_csv(file)
-                elif file.name.endswith(".xlsx"):
-                    dfs[file.name] = pd.read_excel(file)
-
-            # Jika banyak file, gabungkan ke satu agent
-            for name, df in dfs.items():
-                pandas_agent = create_pandas_dataframe_agent(
-                    llm,
-                    df,
-                    verbose=True,
-                    handle_parsing_errors=True,
-                    allow_dangerous_code=True,
-                )
-                tools.append(PythonREPLTool())
-                tools.extend(pandas_agent.tools)
-            st.success(f"{len(dfs)} file berhasil dimuat untuk Python Agent.")
-        except Exception as e:
-            st.error(f"Gagal membaca file: {e}")
-    else:
-        st.info("Upload satu atau lebih file CSV/XLSX untuk Python Agent.")
-
-elif mode == "SQL Agent":
-    try:
-        db = SQLDatabase.from_uri(sql_uri)
-        db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
-        tools.append(db_chain)
-        st.success("Koneksi database berhasil.")
-    except Exception as e:
-        st.error(f"Gagal konek ke database: {e}")
-
-# --- Agent setup ---
-agent = None
-if tools and llm:
-    agent = initialize_agent(
-        tools=tools,
-        llm=llm,
-        agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
-        memory=memory,
-        verbose=True,
-        handle_parsing_errors=True,
+    # --- Setup LLM + Langsmith ---
+    llm = ChatOpenAI(
+        model_name="gpt-4",
+        temperature=0.2,
+        openai_api_key=OPENAI_API_KEY
     )
+    langsmith_client = Client(api_key=OPENAI_API_KEY)
 
-# --- Chat UI ---
-if agent:
-    st.subheader("💬 Chat dengan Data Anda")
-    user_input = st.chat_input("Tanyakan sesuatu...")
+    # --- Setup RAG / FAISS Embedding ---
+    if "vectorstore" not in st.session_state:
+        # buat embedding dari dataset
+        records = df.head(1000).to_dict(orient='records')  # ambil sample
+        docs = [Document(page_content=str(r)) for r in records]
+        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        st.session_state.vectorstore = FAISS.from_documents(docs, embeddings)
+
+    # --- Chatbot ---
+    st.write("---")
+    st.write("### Tanyakan Analisis Data ke Chatbot")
+    user_input = st.text_input("Masukkan pertanyaan anda:")
+
     if user_input:
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        with st.chat_message("assistant"):
-            try:
-                response = agent.run(user_input)
-                st.markdown(response)
-            except Exception as e:
-                if "429" in str(e):
-                    st.error("⚠️ Quota provider habis. Ganti API Key atau coba provider lain.")
-                else:
-                    st.error(f"Error: {e}")
+        # RAG: cari similarity di vector store
+        docs = st.session_state.vectorstore.similarity_search(user_input, k=3)
+        context_text = "\n".join([d.page_content for d in docs])
+
+        prompt_template = f"""
+        Kamu adalah asisten analisis data canggih.
+        Berikut sebagian data dari sheet '{selected_sheet}':
+        {context_text}
+
+        Jawab pertanyaan berikut dengan jelas dan gunakan konteks data:
+        {user_input}
+        """
+        chain = LLMChain(
+            llm=llm,
+            prompt=PromptTemplate(template="{input}", input_variables=["input"])
+        )
+        response = chain.run(prompt_template)
+
+        st.session_state.chat_history.append((user_input, response))
+        st.write("### Jawaban Chatbot")
+        st.write(response)
+
+    # --- Tampilkan Chat History di Sidebar ---
+    st.sidebar.markdown("### Riwayat Chat")
+    for i, (q, a) in enumerate(st.session_state.chat_history[::-1]):
+        st.sidebar.markdown(f"**Q{i+1}:** {q}")
+        st.sidebar.markdown(f"**A{i+1}:** {a}")
