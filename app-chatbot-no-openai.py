@@ -10,14 +10,13 @@ from langchain.vectorstores import FAISS
 from langchain.schema import Document
 from langsmith import Client
 from dotenv import load_dotenv
-import os
 
-# --- Load env ---
+# --- Load environment variables ---
 load_dotenv()
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY","")
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY","")
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY","")
-LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY","")
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
 
 st.set_page_config(page_title="Ultra-Interactive Data Chatbot", layout="wide")
 
@@ -30,7 +29,6 @@ provider = st.sidebar.selectbox("Pilih LLM Provider", ["OpenAI GPT-4", "Google G
 uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
 
 if uploaded_file:
-    # --- Load file langsung dari UploadedFile ---
     sheets = load_excel(uploaded_file)
     sheet_names = list(sheets.keys())
     selected_sheet = st.selectbox("Pilih Sheet", sheet_names)
@@ -102,8 +100,8 @@ if uploaded_file:
         except Exception as e:
             st.error(f"Error menjalankan kode: {e}")
 
-    # --- Tampilkan Chat History ---
+    # --- Tampilkan Chat History di Sidebar ---
     st.sidebar.markdown("### Riwayat Chat")
-    for i, (q,a) in enumerate(st.session_state.chat_history[::-1]):
+    for i, (q, a) in enumerate(st.session_state.chat_history[::-1]):
         st.sidebar.markdown(f"**Q{i+1}:** {q}")
         st.sidebar.markdown(f"**A{i+1}:** {a}")
