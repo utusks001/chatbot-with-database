@@ -1,29 +1,16 @@
-import os
 import streamlit as st
 from utils import load_excel, detect_column_types, chunk_dataframe
 import pandas as pd
 import plotly.express as px
-from langchain.chat_models import ChatOpenAI
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
-from langchain.vectorstores import FAISS
 from langchain.schema import Document
+from langchain.vectorstores import FAISS
+from sentence_transformers import SentenceTransformer
+from langchain.chat_models import ChatOpenAI
 from langsmith import Client
-import openai
-from dotenv import load_dotenv
 
-# --- Load environment variables ---
-load_dotenv()
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
-LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
-
-# --- Pastikan OpenAI API Key untuk embeddings manual ---
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-openai.api_key = OPENAI_API_KEY
-
-st.set_page_config(page_title="Ultra-Interactive Data Chatbot", layout="wide")
+st.set_page_config(page_title="Ultra-Interactive Data Chatbot (No OpenAI)", layout="wide")
 
 # --- Sidebar: Chat History ---
 st.sidebar.title("Riwayat Chat")
@@ -33,7 +20,7 @@ if "chat_history" not in st.session_state:
 # --- Sidebar: LLM Provider ---
 provider = st.sidebar.selectbox(
     "Pilih LLM Provider",
-    ["OpenAI GPT-4", "Google Gemini 2.5 Flash", "GROQ LLaMA 3.3 70B", "Langsmith"]
+    ["Google Gemini 2.5 Flash", "GROQ LLaMA 3.3 70B", "Langsmith", "HuggingFace-local"]
 )
 
 # --- Sidebar: File Uploader ---
@@ -58,37 +45,30 @@ if uploaded_file:
     st.write(f"**Kolom Numerik:** {numeric_cols}")
     st.write(f"**Kolom Kategori:** {categorical_cols}")
 
-    # --- RAG + chunking manual embeddings ---
+    # --- RAG + chunking ---
     if "vectorstore" not in st.session_state:
         all_docs = []
         chunks = chunk_dataframe(df, chunk_size=5000)
         for c in chunks:
-            records = c.to_dict(orient='records')
+            records = c.to_dict(orient="records")
             docs = [Document(page_content=str(r)) for r in records]
             all_docs.extend(docs)
 
-        # --- Generate embeddings manual via OpenAI API ---
-        def get_embeddings(texts):
-            response = openai.Embedding.create(
-                input=texts,
-                model="text-embedding-3-small"
-            )
-            return [d['embedding'] for d in response['data']]
-
-        embeddings_vectors = get_embeddings([d.page_content for d in all_docs])
-        st.session_state.vectorstore = FAISS.from_texts([d.page_content for d in all_docs], embeddings_vectors)
+        # --- HuggingFace embeddings ---
+        st.write("Membuat embeddings menggunakan HuggingFace...")
+        hf_model = SentenceTransformer('all-MiniLM-L6-v2')
+        embeddings_vectors = hf_model.encode([d.page_content for d in all_docs], convert_to_numpy=True)
+        st.session_state.vectorstore = FAISS.from_embeddings(embeddings_vectors, all_docs)
 
     # --- Setup LLM ---
-    if provider == "OpenAI GPT-4":
-        llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=OPENAI_API_KEY)
-    elif provider == "Google Gemini 2.5 Flash":
-        llm = ChatOpenAI(model_name="gemini-2.5", temperature=0.2, openai_api_key=GOOGLE_API_KEY)
-    elif provider == "GROQ LLaMA 3.3 70B":
-        llm = ChatOpenAI(model_name="llama-3.3-70b-versatile", temperature=0.2, openai_api_key=GROQ_API_KEY)
-    elif provider == "Langsmith":
-        llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=LANGSMITH_API_KEY)
+    if provider == "HuggingFace-local":
+        from transformers import pipeline
+        llm = pipeline("text-generation", model="tiiuae/falcon-7b-instruct", device=0)
+    else:
+        # Dummy ChatOpenAI interface untuk Gemini/GROQ/Langsmith
+        llm = ChatOpenAI(model_name="gpt-4", temperature=0.2)
 
-    langsmith_client = Client(api_key=LANGSMITH_API_KEY)
+    langsmith_client = Client(api_key="")  # optional, jika pakai Langsmith
 
     st.write("---")
     st.write("### Tanyakan Analisis Data ke Chatbot (Plot/ Pivot/ Statistik)")
@@ -111,12 +91,15 @@ if uploaded_file:
         Buat kode Python Plotly atau Pivot Table sesuai pertanyaan.
         Sertakan filter dropdown untuk kolom agar chart interaktif.
         """
-        chain = LLMChain(
-            llm=llm,
-            prompt=PromptTemplate(template="{input}", input_variables=["input"])
-        )
 
-        response = chain.run(prompt_template)
+        if provider == "HuggingFace-local":
+            response = llm(prompt_template, max_new_tokens=300)[0]["generated_text"]
+        else:
+            chain = LLMChain(
+                llm=llm,
+                prompt=PromptTemplate(template="{input}", input_variables=["input"])
+            )
+            response = chain.run(prompt_template)
 
         # --- Simpan chat history ---
         st.session_state.chat_history.append((user_input, response))
