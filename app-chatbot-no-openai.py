@@ -68,9 +68,9 @@ if uploaded_file:
     if provider == "OpenAI GPT-4":
         llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=GEMINI_API_KEY)
     elif provider == "Google Gemini 2.5 Flash":
-        llm = ChatOpenAI(model_name="gemini-2.5", temperature=0.2, openai_api_key=GOOGLE_API_KEY)  # placeholder
+        llm = ChatOpenAI(model_name="gemini-2.5", temperature=0.2, openai_api_key=GOOGLE_API_KEY)
     elif provider == "GROQ LLaMA 3.3 70B":
-        llm = ChatOpenAI(model_name="llama-3.3-70b-versatile", temperature=0.2, openai_api_key=GROQ_API_KEY)  # placeholder
+        llm = ChatOpenAI(model_name="llama-3.3-70b-versatile", temperature=0.2, openai_api_key=GROQ_API_KEY)
     elif provider == "Langsmith":
         llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=LANGSMITH_API_KEY)
 
