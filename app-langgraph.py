@@ -25,7 +25,7 @@ LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 if not OPENAI_API_KEY:
-    st.warning("OPENAI_API_KEY belum ditemukan di .env — agent tidak akan bekerja tanpa API key.")
+st.warning("OPENAI_API_KEY belum ditemukan di .env — agent tidak akan bekerja tanpa API key.")
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Chatbot Data Analysis (LangGraph)", layout="wide")
@@ -34,123 +34,44 @@ st.title("🤖 Chatbot Data Analysis — LangGraph (stateful)")
 col1, col2 = st.columns([2,1])
 
 with col2:
-    st.header("Settings")
-    st.text_input("OpenAI API Key", value=OPENAI_API_KEY or "", key="_openai_key", type="password")
-    st.text_input("LangSmith API Key (optional)", value=LANGSMITH_API_KEY or "", key="_langsmith_key", type="password")
-    st.selectbox("Mode (toolset)", ["Python Agent", "SQL Agent"], key="mode_select")
-    reset = st.button("Reset Conversation")
+st.header("Settings")
+st.text_input("OpenAI API Key", value=OPENAI_API_KEY or "", key="_openai_key", type="password")
+st.text_input("LangSmith API Key (optional)", value=LANGSMITH_API_KEY or "", key="_langsmith_key", type="password")
+st.selectbox("Mode (toolset)", ["Python Agent", "SQL Agent"], key="mode_select")
+reset = st.button("Reset Conversation")
 
 with col1:
-    st.header("Upload / Data Source")
-    uploaded_file = st.file_uploader("Upload CSV / Excel (untuk Python Agent)", type=["csv","xlsx"]) 
-    uploaded_db = st.file_uploader("Upload SQLite DB (untuk SQL Agent)", type=["db","sqlite"]) 
+st.header("Upload / Data Source")
+uploaded_file = st.file_uploader("Upload CSV / Excel (untuk Python Agent)", type=["csv","xlsx"])
+uploaded_db = st.file_uploader("Upload SQLite DB (untuk SQL Agent)", type=["db","sqlite"])
 
 # --- LLM & tracing setup ---
 llm_kwargs = {"temperature": 0}
 
 if OPENAI_API_KEY:
-    llm = OpenAI(api_key=OPENAI_API_KEY, model_name=MODEL, **llm_kwargs)
+llm = OpenAI(api_key=OPENAI_API_KEY, model_name=MODEL, **llm_kwargs)
 else:
-    llm = OpenAI(api_key=None, model_name=MODEL, **llm_kwargs)  # will error if called
+llm = OpenAI(api_key=None, model_name=MODEL, **llm_kwargs) # will error if called
 
 tracer = None
 if LANGSMITH_API_KEY:
-    tracer = LangsmithTracer(project_name="chatbot-data-analysis", api_key=LANGSMITH_API_KEY)
-    st.sidebar.success("LangSmith tracing enabled")
+tracer = LangsmithTracer(project_name="chatbot-data-analysis", api_key=LANGSMITH_API_KEY)
+st.sidebar.success("LangSmith tracing enabled")
 else:
-    st.sidebar.info("LangSmith disabled — set LANGSMITH_API_KEY in .env to enable")
+st.sidebar.info("LangSmith disabled — set LANGSMITH_API_KEY in .env to enable")
 
 # Attach tracer if available
 callbacks = [tracer] if tracer else []
 
 # --- Conversation memory (stateful) ---
 if "memory" not in st.session_state:
-    st.session_state.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+st.session_state.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 if reset:
-    st.session_state.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    st.success("Conversation memory reset")
+st.session_state.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+st.success("Conversation memory reset")
 
 # --- Tools setup ---
 tools = []
 
-# Python REPL tool (used for safe python-based analysis)
-python_tool = PythonREPLTool()
-tools.append(Tool(func=python_tool.run, name="python", description="Run python code (pandas, plotting, basic calculations)."))
-
-# If CSV is uploaded, create a dataframe agent tool
-df: Optional[pd.DataFrame] = None
-if uploaded_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-        tmp.write(uploaded_file.getbuffer())
-        tmp_path = tmp.name
-    if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(tmp_path)
-    else:
-        df = pd.read_excel(tmp_path)
-
-    # helper agent specialized for pandas
-    pandas_agent = create_pandas_dataframe_agent(llm, df, verbose=False)
-    def pandas_agent_run(query: str):
-        return pandas_agent.run(query)
-    tools.append(Tool(func=pandas_agent_run, name="pandas_agent", description="Run high-level analytics on the uploaded dataframe."))
-
-# If sqlite DB provided, set up SQLDatabase
-db = None
-if uploaded_db:
-    with open("uploaded_sqlite.db", "wb") as f:
-        f.write(uploaded_db.getbuffer())
-    db = SQLDatabase.from_uri("sqlite:///uploaded_sqlite.db")
-    def sql_chain_run(query: str):
-        chain = SQLDatabaseChain(llm=llm, database=db, verbose=False)
-        return chain.run(query)
-    tools.append(Tool(func=sql_chain_run, name="sql_db", description="Run SQL queries against the uploaded database."))
-
-# Basic toolbox summary
-st.sidebar.header("Available tools")
-for t in tools:
-    st.sidebar.write(f"- {t.name}: {t.description}")
-
-# --- Initialize conversational agent ---
-agent_executor = None
-if tools:
-    agent_executor = initialize_agent(
-        tools,
-        llm,
-        agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
-        verbose=False,
-        memory=st.session_state.memory,
-        callbacks=callbacks,
-    )
-
-# --- Chat / Interaction ---
-st.header("Chat with the Data Agent")
-user_input = st.text_area("Ask something about the data (natural language). Use follow-ups — memory is preserved.")
-if st.button("Send"):
-    if not agent_executor:
-        st.error("Tidak ada tool tersedia. Upload file CSV atau SQLite, atau periksa API key.")
-    else:
-        with st.spinner("Processing..."):
-            try:
-                response = agent_executor.run(user_input)
-                st.markdown("**Agent:**")
-                st.write(response)
-            except Exception as e:
-                st.error(f"Agent error: {e}")
-
-# show conversation memory
-with st.expander("Conversation history"):
-    hist = st.session_state.memory.load_memory_variables({})
-    st.write(hist.get("chat_history", "- kosong -"))
-
-with st.expander("Raw tools list"):
-    st.write([t.name for t in tools])
-
---- NOTES.md ---
-This implementation uses a *conversational* agent and ConversationBufferMemory to preserve multi-turn state. The design emulates a graph-style modular pipeline by exposing multiple tools that the agent can call (python REPL, pandas agent, SQL chain). In a proper LangGraph implementation you could replace the "tools" registry with nodes and explicit graph edges — this sample keeps compatibility with LangChain stable APIs while delivering the stateful, multi-tool behavior you requested.
-
-Security notes:
-- PythonREPLTool executes code; do not run untrusted files on production without sandboxing.
-- For production deploy, consider limiting allowed python modules, using Docker sandbox, or using separate worker processes with strict resource limits.
-
---- END ---
+st.write([t.name for t in tools])
