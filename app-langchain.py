@@ -62,7 +62,7 @@ if uploaded_file is not None:
     if "agent_initialized" not in st.session_state:
         try:
             # Menggunakan ChatGoogleGenerativeAI
-            llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=st.secrets["GOOGLE_API_KEY"])
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=st.secrets["GOOGLE_API_KEY"])
             st.session_state.agent = create_pandas_dataframe_agent(
                 llm,
                 st.session_state.df,
