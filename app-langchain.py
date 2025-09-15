@@ -83,8 +83,10 @@ if uploaded_file is not None:
                 llm,
                 st.session_state.df,
                 verbose=True,
-                agent_type=AgentType.OPENAI_FUNCTIONS
+                agent_type=AgentType.OPENAI_FUNCTIONS,
+                allow_dangerous_code=True # <-- Tambahkan baris ini
             )
+           
             st.session_state.agent_initialized = True
             st.success("Chatbot siap! Silakan ajukan pertanyaan tentang data Anda.")
         except Exception as e:
