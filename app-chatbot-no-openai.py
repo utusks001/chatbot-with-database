@@ -8,7 +8,7 @@ from langchain.schema import Document
 from langchain.vectorstores import FAISS
 from sentence_transformers import SentenceTransformer
 from langchain.chat_models import ChatOpenAI
-from langsmith import Client, Run
+from langsmith import Client  # Hanya import Client, Run diganti sesuai API terbaru
 
 st.set_page_config(page_title="Advanced RAG Data Chatbot", layout="wide")
 
@@ -77,7 +77,7 @@ if uploaded_file:
     user_input = st.text_input("Masukkan pertanyaan anda:")
 
     if user_input:
-        # --- Similarity search (Advanced RAG) ---
+        # --- Advanced RAG: similarity search ---
         docs = st.session_state.vectorstore.similarity_search(user_input, k=5)
         context_text = "\n".join([d.page_content for d in docs])
 
@@ -93,9 +93,8 @@ if uploaded_file:
         Sertakan filter dropdown untuk kolom agar chart interaktif.
         """
 
-        # --- Langsmith LLMOps Run ---
-        run = Run.create(
-            client=langsmith_client,
+        # --- Langsmith LLMOps Run sesuai API terbaru ---
+        run = langsmith_client.runs.create(
             name="AdvancedRAGQuery",
             description="Query data sheet dengan Advanced RAG",
             metadata={"sheet": selected_sheet, "provider": provider}
@@ -111,7 +110,7 @@ if uploaded_file:
                 )
                 response = chain.run(prompt_template)
 
-            # --- Simpan Langsmith log ---
+            # --- Log ke Langsmith ---
             run.add_message("user", user_input)
             run.add_message("assistant", response)
             run.complete()
