@@ -21,11 +21,18 @@ sqlalchemy>=2.0.0
 sqlite-utils
 psycopg2-binary
 mysql-connector-python
+pymysql
 # LangChain core
-langchain>=0.2.0
 langchain-community>=0.2.0
+pandas
+numpy
+openpyxl
+plotly
+matplotlib
+seaborn
+langchain
+faiss-cpu
+tqdm
 langchain-experimental>=0.0.57
 langchain-openai>=0.1.0
 langsmith>=0.1.0
-tqdm
-pymysql
