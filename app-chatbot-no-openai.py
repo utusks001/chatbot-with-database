@@ -19,6 +19,9 @@ GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
 
+# --- Pastikan embeddings membaca API Key dari environment ---
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+
 st.set_page_config(page_title="Ultra-Interactive Data Chatbot", layout="wide")
 
 # --- Sidebar: Chat History ---
@@ -58,10 +61,7 @@ if uploaded_file:
     if "vectorstore" not in st.session_state:
         all_docs = []
         chunks = chunk_dataframe(df, chunk_size=5000)
-        embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            model_kwargs={"openai_api_key": OPENAI_API_KEY}  # <--- patch fix pydantic_core
-        )
+        embeddings = OpenAIEmbeddings()  # <--- default constructor fix pydantic_core
         for c in chunks:
             records = c.to_dict(orient='records')
             docs = [Document(page_content=str(r)) for r in records]
