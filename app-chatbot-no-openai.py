@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import load_excel, detect_column_types
+from utils import load_excel, detect_column_types, chunk_dataframe
 import pandas as pd
 import plotly.express as px
 from langchain.chat_models import ChatOpenAI
@@ -19,16 +19,16 @@ GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY","")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY","")
 LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY","")
 
-st.set_page_config(page_title="Advanced Interactive Data Chatbot", layout="wide")
+st.set_page_config(page_title="Ultra-Interactive Data Chatbot", layout="wide")
 
-# --- Sidebar: Chat History & Provider ---
+# --- Sidebar ---
 st.sidebar.title("Riwayat Chat")
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 provider = st.sidebar.selectbox("Pilih LLM Provider", ["OpenAI GPT-4", "Google Gemini 2.5 Flash", "GROQ LLaMA 3.3 70B", "Langsmith"])
-
 uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
+
 if uploaded_file:
     sheets = load_excel(uploaded_file)
     sheet_names = list(sheets.keys())
@@ -42,14 +42,18 @@ if uploaded_file:
     st.write(f"**Kolom Numerik:** {numeric_cols}")
     st.write(f"**Kolom Kategori:** {categorical_cols}")
 
-    # --- Setup RAG / FAISS ---
+    # --- Setup RAG + chunking untuk dataset besar ---
     if "vectorstore" not in st.session_state:
-        records = df.head(1000).to_dict(orient='records')
-        docs = [Document(page_content=str(r)) for r in records]
+        all_docs = []
+        chunks = chunk_dataframe(df, chunk_size=5000)
         embeddings = OpenAIEmbeddings(openai_api_key=GEMINI_API_KEY)
-        st.session_state.vectorstore = FAISS.from_documents(docs, embeddings)
+        for c in chunks:
+            records = c.to_dict(orient='records')
+            docs = [Document(page_content=str(r)) for r in records]
+            all_docs.extend(docs)
+        st.session_state.vectorstore = FAISS.from_documents(all_docs, embeddings)
 
-    # --- LLM Initialization berdasarkan provider ---
+    # --- Setup LLM berdasarkan provider ---
     if provider == "OpenAI GPT-4":
         llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=GEMINI_API_KEY)
     elif provider == "Google Gemini 2.5 Flash":
@@ -57,7 +61,7 @@ if uploaded_file:
     elif provider == "GROQ LLaMA 3.3 70B":
         llm = ChatOpenAI(model_name="llama-3.3-70b-versatile", temperature=0.2, openai_api_key=GROQ_API_KEY)  # placeholder
     elif provider == "Langsmith":
-        llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=LANGSMITH_API_KEY)  # bisa gunakan Langsmith client untuk tracking
+        llm = ChatOpenAI(model_name="gpt-4", temperature=0.2, openai_api_key=LANGSMITH_API_KEY)
 
     langsmith_client = Client(api_key=LANGSMITH_API_KEY)
 
@@ -67,32 +71,37 @@ if uploaded_file:
     user_input = st.text_input("Masukkan pertanyaan anda:")
 
     if user_input:
+        # --- RAG similarity search ---
         docs = st.session_state.vectorstore.similarity_search(user_input, k=3)
         context_text = "\n".join([d.page_content for d in docs])
 
         prompt_template = f"""
-        Kamu adalah asisten analisis data canggih.
+        Kamu adalah asisten analisis data ultra-interaktif.
         Data sheet '{selected_sheet}':
         {context_text}
 
-        Buat kode Python Plotly atau Pivot Table sesuai pertanyaan berikut: {user_input}
-        Tampilkan juga hasil visualisasi atau pivot di Streamlit.
+        Berdasarkan data ini, deteksi tipe plot terbaik (scatter, line, bar, histogram, pivot) untuk menjawab pertanyaan:
+        {user_input}
+
+        Buat kode Python Plotly atau Pivot Table sesuai pertanyaan.
+        Sertakan filter dropdown untuk kolom agar chart interaktif.
         """
         chain = LLMChain(llm=llm, prompt=PromptTemplate(template="{input}", input_variables=["input"]))
         response = chain.run(prompt_template)
 
-        # --- Execute code secara aman ---
+        # --- Simpan chat history ---
         st.session_state.chat_history.append((user_input, response))
-        st.write("### Kode dan Hasil Chatbot")
+        st.write("### Kode yang di-generate Chatbot")
         st.code(response, language="python")
 
+        # --- Execute kode secara aman ---
         try:
             local_vars = {"df": df, "px": px, "st": st, "pd": pd}
             exec(response, {}, local_vars)
         except Exception as e:
             st.error(f"Error menjalankan kode: {e}")
 
-    # --- Tampilkan Chat History di Sidebar ---
+    # --- Tampilkan Chat History ---
     st.sidebar.markdown("### Riwayat Chat")
     for i, (q,a) in enumerate(st.session_state.chat_history[::-1]):
         st.sidebar.markdown(f"**Q{i+1}:** {q}")
