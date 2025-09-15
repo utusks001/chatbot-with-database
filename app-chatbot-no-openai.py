@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from utils import load_excel, detect_column_types, chunk_dataframe
 import pandas as pd
@@ -15,9 +16,11 @@ from dotenv import load_dotenv
 load_dotenv()
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
+
+# --- Set environment variable untuk OpenAIEmbeddings ---
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 st.set_page_config(page_title="Ultra-Interactive Data Chatbot", layout="wide")
 
@@ -58,7 +61,7 @@ if uploaded_file:
     if "vectorstore" not in st.session_state:
         all_docs = []
         chunks = chunk_dataframe(df, chunk_size=5000)
-        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)  # <--- pakai OPENAI_API_KEY
+        embeddings = OpenAIEmbeddings()  # <- otomatis ambil OPENAI_API_KEY dari env
         for c in chunks:
             records = c.to_dict(orient='records')
             docs = [Document(page_content=str(r)) for r in records]
