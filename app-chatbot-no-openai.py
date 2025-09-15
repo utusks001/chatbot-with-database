@@ -30,6 +30,7 @@ provider = st.sidebar.selectbox("Pilih LLM Provider", ["OpenAI GPT-4", "Google G
 uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
 
 if uploaded_file:
+    # --- Load file langsung dari UploadedFile ---
     sheets = load_excel(uploaded_file)
     sheet_names = list(sheets.keys())
     selected_sheet = st.selectbox("Pilih Sheet", sheet_names)
