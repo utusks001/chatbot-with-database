@@ -8,9 +8,9 @@ from langchain.schema import Document
 from langchain.vectorstores import FAISS
 from sentence_transformers import SentenceTransformer
 from langchain.chat_models import ChatOpenAI
-from langsmith import Client
+from langsmith import Client, Run
 
-st.set_page_config(page_title="Ultra-Interactive Data Chatbot (No OpenAI)", layout="wide")
+st.set_page_config(page_title="Advanced RAG Data Chatbot", layout="wide")
 
 # --- Sidebar: Chat History ---
 st.sidebar.title("Riwayat Chat")
@@ -26,8 +26,13 @@ provider = st.sidebar.selectbox(
 # --- Sidebar: File Uploader ---
 uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","xlsx"])
 
+# --- Langsmith client ---
+st.sidebar.markdown("Langsmith LLMOps")
+LANGSMITH_API_KEY = st.secrets.get("LANGSMITH_API_KEY", "")
+langsmith_client = Client(api_key=LANGSMITH_API_KEY)
+
+# --- Load data ---
 if uploaded_file:
-    # --- Load data ---
     try:
         sheets = load_excel(uploaded_file)
     except Exception as e:
@@ -45,8 +50,9 @@ if uploaded_file:
     st.write(f"**Kolom Numerik:** {numeric_cols}")
     st.write(f"**Kolom Kategori:** {categorical_cols}")
 
-    # --- RAG + chunking ---
+    # --- Advanced RAG: Chunking + Embeddings ---
     if "vectorstore" not in st.session_state:
+        st.write("Membuat embeddings HuggingFace untuk Advanced RAG...")
         all_docs = []
         chunks = chunk_dataframe(df, chunk_size=5000)
         for c in chunks:
@@ -54,30 +60,25 @@ if uploaded_file:
             docs = [Document(page_content=str(r)) for r in records]
             all_docs.extend(docs)
 
-        # --- HuggingFace embeddings ---
-        st.write("Membuat embeddings menggunakan HuggingFace...")
         hf_model = SentenceTransformer('all-MiniLM-L6-v2')
         embeddings_vectors = hf_model.encode([d.page_content for d in all_docs], convert_to_numpy=True)
         st.session_state.vectorstore = FAISS.from_embeddings(embeddings_vectors, all_docs)
+        st.session_state.vectorstore_version = 1  # versioning
 
     # --- Setup LLM ---
     if provider == "HuggingFace-local":
         from transformers import pipeline
         llm = pipeline("text-generation", model="tiiuae/falcon-7b-instruct", device=0)
     else:
-        # Dummy ChatOpenAI interface untuk Gemini/GROQ/Langsmith
         llm = ChatOpenAI(model_name="gpt-4", temperature=0.2)
-
-    langsmith_client = Client(api_key="")  # optional, jika pakai Langsmith
 
     st.write("---")
     st.write("### Tanyakan Analisis Data ke Chatbot (Plot/ Pivot/ Statistik)")
-
     user_input = st.text_input("Masukkan pertanyaan anda:")
 
     if user_input:
-        # --- Similarity search ---
-        docs = st.session_state.vectorstore.similarity_search(user_input, k=3)
+        # --- Similarity search (Advanced RAG) ---
+        docs = st.session_state.vectorstore.similarity_search(user_input, k=5)
         context_text = "\n".join([d.page_content for d in docs])
 
         prompt_template = f"""
@@ -92,28 +93,43 @@ if uploaded_file:
         Sertakan filter dropdown untuk kolom agar chart interaktif.
         """
 
-        if provider == "HuggingFace-local":
-            response = llm(prompt_template, max_new_tokens=300)[0]["generated_text"]
-        else:
-            chain = LLMChain(
-                llm=llm,
-                prompt=PromptTemplate(template="{input}", input_variables=["input"])
-            )
-            response = chain.run(prompt_template)
+        # --- Langsmith LLMOps Run ---
+        run = Run.create(
+            client=langsmith_client,
+            name="AdvancedRAGQuery",
+            description="Query data sheet dengan Advanced RAG",
+            metadata={"sheet": selected_sheet, "provider": provider}
+        )
 
-        # --- Simpan chat history ---
-        st.session_state.chat_history.append((user_input, response))
-        st.write("### Kode yang di-generate Chatbot")
-        st.code(response, language="python")
-
-        # --- Execute kode ---
         try:
+            if provider == "HuggingFace-local":
+                response = llm(prompt_template, max_new_tokens=300)[0]["generated_text"]
+            else:
+                chain = LLMChain(
+                    llm=llm,
+                    prompt=PromptTemplate(template="{input}", input_variables=["input"])
+                )
+                response = chain.run(prompt_template)
+
+            # --- Simpan Langsmith log ---
+            run.add_message("user", user_input)
+            run.add_message("assistant", response)
+            run.complete()
+
+            # --- Simpan chat history ---
+            st.session_state.chat_history.append((user_input, response))
+            st.write("### Kode yang di-generate Chatbot")
+            st.code(response, language="python")
+
+            # --- Execute kode ---
             local_vars = {"df": df, "px": px, "st": st, "pd": pd}
             exec(response, {}, local_vars)
+
         except Exception as e:
+            run.complete(error=str(e))
             st.error(f"Error menjalankan kode: {e}")
 
-    # --- Tampilkan Chat History ---
+    # --- Chat History Sidebar ---
     st.sidebar.markdown("### Riwayat Chat")
     for i, (q, a) in enumerate(st.session_state.chat_history[::-1]):
         st.sidebar.markdown(f"**Q{i+1}:** {q}")
