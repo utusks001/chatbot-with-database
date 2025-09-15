@@ -6,23 +6,26 @@ def load_excel(uploaded_file):
     Load multi-sheet Excel atau CSV dari Streamlit UploadedFile.
 
     Args:
-        uploaded_file: object dari st.file_uploader
+        uploaded_file: objek hasil st.file_uploader
 
     Returns:
         dict: {sheet_name: dataframe}
     """
-    filename = uploaded_file.name  # gunakan nama file untuk cek ekstensi
+    # Gunakan uploaded_file.name untuk cek ekstensi
+    filename = uploaded_file.name.lower()
 
     if filename.endswith('.csv'):
         # CSV
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
         df = pd.read_csv(stringio)
         return {"Sheet1": df}
-    else:
+    elif filename.endswith(('.xls', '.xlsx')):
         # Excel
         bytes_data = BytesIO(uploaded_file.getvalue())
         xls = pd.ExcelFile(bytes_data)
         return {sheet_name: xls.parse(sheet_name) for sheet_name in xls.sheet_names}
+    else:
+        raise ValueError("File harus berekstensi .csv, .xls, atau .xlsx")
 
 def detect_column_types(df):
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
