@@ -5,7 +5,7 @@ langgraph
 langchain-google-genai
 sentence-transformers
 langchain-groq
-openai
+openai>=1.40.0
 langchain-core
 Pillow
 requests
