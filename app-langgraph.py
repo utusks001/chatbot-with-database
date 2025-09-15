@@ -36,7 +36,9 @@ st.title("🤖 Chatbot Data Analysis dengan LangGraph + LangSmith")
 st.sidebar.header("Pengaturan")
 mode = st.sidebar.radio("Pilih Mode Analisis", ["Python Agent", "SQL Agent"])
 
-uploaded_file = st.sidebar.file_uploader("Upload CSV untuk Analisis (mode Python)", type=["csv"])
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Data untuk Analisis (CSV/XLSX)", type=["csv", "xlsx"]
+)
 sql_uri = st.sidebar.text_input("SQLite URI untuk SQL Agent", value="sqlite:///sample.db")
 
 # --- LLM setup ---
@@ -55,13 +57,26 @@ tools = []
 
 if mode == "Python Agent":
     if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        pandas_agent = create_pandas_dataframe_agent(llm, df, verbose=True, handle_parsing_errors=True)
-        tools.append(PythonREPLTool())
-        tools.extend(pandas_agent.tools)
-        st.success("CSV berhasil dimuat, siap untuk analisis dengan Python Agent.")
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
+            elif uploaded_file.name.endswith(".xlsx"):
+                df = pd.read_excel(uploaded_file)
+            else:
+                raise ValueError("Format file tidak didukung.")
+
+            pandas_agent = create_pandas_dataframe_agent(
+                llm, df, verbose=True, handle_parsing_errors=True
+            )
+            tools.append(PythonREPLTool())
+            tools.extend(pandas_agent.tools)
+            st.success(
+                f"File **{uploaded_file.name}** berhasil dimuat, siap untuk analisis dengan Python Agent."
+            )
+        except Exception as e:
+            st.error(f"Gagal membaca file: {e}")
     else:
-        st.warning("Upload file CSV untuk mulai analisis dengan Python Agent.")
+        st.warning("Upload file CSV/XLSX untuk mulai analisis dengan Python Agent.")
 
 if mode == "SQL Agent":
     try:
