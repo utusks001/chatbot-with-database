@@ -1,11 +1,11 @@
-streamlit>=1.20.0
+streamlit
 python-dotenv
 PyPDF2
 python-docx
 python-pptx
 langgraph
-langchain>=0.0.350
-langsmith>=0.0.10
+langchain
+langsmith
 langchain-community
 langchain-google-genai
 sentence-transformers
