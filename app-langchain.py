@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 import io
-from utils import detect_data_types, recommend_and_plot
+from utils1 import detect_data_types, recommend_and_plot
 import matplotlib.pyplot as plt
 
 # LangChain and Google Generative AI imports
