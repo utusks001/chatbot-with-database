@@ -3,10 +3,13 @@ import pandas as pd
 def load_excel(uploaded_file):
     """
     Load multi-sheet Excel atau CSV dari Streamlit UploadedFile.
-    uploaded_file: st.file_uploader result
-    Returns: dict {sheet_name: dataframe}
+
+    Args:
+        uploaded_file: object dari st.file_uploader
+
+    Returns:
+        dict: {sheet_name: dataframe}
     """
-    # Cek tipe file berdasarkan nama
     if uploaded_file.name.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
         return {"Sheet1": df}
@@ -16,8 +19,13 @@ def load_excel(uploaded_file):
 
 def detect_column_types(df):
     """
-    Deteksi kolom numerik vs kategori
-    Returns: numeric_cols, categorical_cols
+    Deteksi kolom numerik dan kategori dari dataframe.
+
+    Args:
+        df: pd.DataFrame
+
+    Returns:
+        tuple: (numeric_cols, categorical_cols)
     """
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     categorical_cols = df.select_dtypes(exclude=['number']).columns.tolist()
@@ -25,8 +33,14 @@ def detect_column_types(df):
 
 def chunk_dataframe(df, chunk_size=5000):
     """
-    Bagi dataframe besar menjadi chunk untuk RAG embedding
-    Returns: list of dataframes
+    Bagi dataframe besar menjadi chunk untuk RAG embedding.
+
+    Args:
+        df: pd.DataFrame
+        chunk_size: int
+
+    Returns:
+        list of pd.DataFrame
     """
     chunks = []
     for i in range(0, len(df), chunk_size):
