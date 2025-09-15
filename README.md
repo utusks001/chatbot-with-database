@@ -104,9 +104,13 @@ Deploy repository Anda.
 Tambahkan Secrets di menu Settings → Secrets:
 
 OCR_SPACE_API_KEY="your_ocr_space_api_key"
+
 GOOGLE_API_KEY="your_google_api_key"
+
 GROQ_API_KEY="your_groq_api_key"
+
 LANGCHAIN_API_KEY="your_langsmith_api_key"
+
 LANGCHAIN_TRACING_V2="true"
 
 
