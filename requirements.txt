@@ -10,8 +10,6 @@ langchain-core
 Pillow
 requests
 xlrd==1.2.0   # untuk .xls (versi baru xlrd drop dukungan xlsx)
-matplotlib
-seaborn
 # streamlit>=1.28.0
 streamlit
 python-dotenv
