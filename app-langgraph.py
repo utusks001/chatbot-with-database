@@ -2,166 +2,145 @@
 import os
 import streamlit as st
 from dotenv import load_dotenv
-import pandas as pd
-import mysql.connector
 
-# LangChain
-from langchain_openai import ChatOpenAI
-from langchain.agents import initialize_agent, Tool
-from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain_experimental.sql import SQLDatabaseChain
-from langchain.sql_database import SQLDatabase
-
-# OpenAI official
+# OpenAI official SDK
 from openai import OpenAI
 
-# ------------------------
-# 1. Load environment
-# ------------------------
+# LangChain / LangGraph
+from langchain_openai import ChatOpenAI
+from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_community.utilities import SQLDatabase
+from langchain_experimental.sql import SQLDatabaseChain
+from langchain.agents import initialize_agent, AgentType, Tool
+from langchain.memory import ConversationBufferMemory
+
+import pandas as pd
+
+# --- Load env ---
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID", "")
+OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-if not OPENAI_API_KEY:
-    st.error("❌ OPENAI_API_KEY belum di-set di .env")
-    st.stop()
-
-# Jika key format sk-proj-... maka wajib ada project id
-if OPENAI_API_KEY.startswith("sk-proj-"):
+# --- Patch API KEY untuk sk-proj ---
+if OPENAI_API_KEY and OPENAI_API_KEY.startswith("sk-proj-"):
     if not OPENAI_PROJECT_ID:
-        st.error("❌ OPENAI_PROJECT_ID wajib diisi di .env untuk key sk-proj-...")
-        st.stop()
-    # patch env supaya SDK/LangChain bisa pakai project
-    os.environ["OPENAI_PROJECT_ID"] = OPENAI_PROJECT_ID
-
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-
-# ------------------------
-# 2. Build LLM (LangChain)
-# ------------------------
-try:
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0,
-        api_key=OPENAI_API_KEY,
-    )
-except Exception as e:
-    st.error(f"❌ Gagal inisialisasi ChatOpenAI: {e}")
-    st.stop()
-
-# ------------------------
-# 3. Fallback Official SDK
-# ------------------------
-client = None
-try:
-    if OPENAI_API_KEY.startswith("sk-proj-"):
-        client = OpenAI(api_key=OPENAI_API_KEY, project=OPENAI_PROJECT_ID)
+        st.error("❌ OPENAI_PROJECT_ID wajib diset di .env jika memakai sk-proj- API key!")
     else:
+        os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+        os.environ["OPENAI_PROJECT_ID"] = OPENAI_PROJECT_ID
+
+# --- OpenAI official client test ---
+client = None
+if OPENAI_API_KEY:
+    try:
         client = OpenAI(api_key=OPENAI_API_KEY)
-except Exception as e:
-    st.warning(f"⚠️ OpenAI official client gagal: {e}")
+        if OPENAI_PROJECT_ID:
+            client = OpenAI(api_key=OPENAI_API_KEY, project=OPENAI_PROJECT_ID)
+    except Exception as e:
+        st.error(f"Gagal inisialisasi OpenAI client: {e}")
 
-# ------------------------
-# 4. Streamlit UI
-# ------------------------
-st.set_page_config(page_title="LangGraph + SQL + CSV Chatbot", layout="wide")
-st.title("🤖 LangGraph Chatbot (MySQL + Python Agent + Multi-CSV/XLSX)")
+# --- Streamlit UI ---
+st.set_page_config(page_title="Chatbot Data Analysis", layout="wide")
+st.title("🤖 Chatbot Data Analysis (Python Agent + MySQL)")
 
-tab1, tab2, tab3 = st.tabs(["💬 Chat", "📊 Dataset", "🗄 SQL DB"])
+st.sidebar.header("⚙️ Pengaturan")
+mode = st.sidebar.radio("Pilih Mode Analisis", ["Python Agent", "MySQL Agent"])
 
-# ------------------------
-# 5. Multi-file Upload
-# ------------------------
-with tab2:
-    uploaded_files = st.file_uploader("Upload CSV/XLSX (bisa banyak file)", type=["csv", "xlsx"], accept_multiple_files=True)
+uploaded_files = st.sidebar.file_uploader(
+    "Upload Dataset (CSV/XLSX) – bisa multi-file",
+    type=["csv", "xlsx"],
+    accept_multiple_files=True,
+)
+sql_uri = st.sidebar.text_input("MySQL URI", value="mysql+pymysql://user:pass@localhost:3306/dbname")
 
-    dfs = {}
-    if uploaded_files:
-        for f in uploaded_files:
-            if f.name.endswith(".csv"):
-                dfs[f.name] = pd.read_csv(f)
-            elif f.name.endswith(".xlsx"):
-                dfs[f.name] = pd.read_excel(f)
+# --- LLM setup ---
+llm = None
+if OPENAI_API_KEY:
+    llm = ChatOpenAI(
+        openai_api_key=OPENAI_API_KEY,
+        model=MODEL,
+        temperature=0,
+        streaming=True,
+    )
 
-        st.success(f"{len(dfs)} file berhasil dimuat ✅")
-        for name, df in dfs.items():
-            st.subheader(name)
-            st.dataframe(df.head())
+# --- Memory ---
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-# ------------------------
-# 6. MySQL Connection
-# ------------------------
-with tab3:
-    st.subheader("Koneksi MySQL")
-    db_host = st.text_input("Host", value="localhost")
-    db_user = st.text_input("User", value="root")
-    db_pass = st.text_input("Password", type="password")
-    db_name = st.text_input("Database", value="test")
-
-    db = None
-    if st.button("Connect DB"):
-        try:
-            db = SQLDatabase.from_uri(f"mysql+mysqlconnector://{db_user}:{db_pass}@{db_host}/{db_name}")
-            st.success("✅ Koneksi DB berhasil")
-        except Exception as e:
-            st.error(f"❌ Gagal koneksi DB: {e}")
-
-# ------------------------
-# 7. Build Agents
-# ------------------------
+# --- Tools ---
 tools = []
 
-# Python DataFrame Agents untuk tiap file
-if dfs:
-    for name, df in dfs.items():
-        agent_df = create_pandas_dataframe_agent(llm, df, verbose=True)
-        tools.append(Tool(
-            name=f"Dataframe_{name}",
-            func=agent_df.run,
-            description=f"Analisis dataset {name}"
-        ))
-
-# SQL Agent
-if db:
-    db_chain = SQLDatabaseChain(llm=llm, database=db, verbose=True)
-    tools.append(Tool(
-        name="MySQL",
-        func=db_chain.run,
-        description="Eksekusi query ke database MySQL"
-    ))
-
-# Init Agent
-if tools:
-    agent = initialize_agent(tools, llm, agent="chat-conversational-react-description", verbose=True)
-else:
-    agent = None
-
-# ------------------------
-# 8. Chat
-# ------------------------
-with tab1:
-    st.subheader("Chat dengan AI")
-    user_input = st.text_area("Masukkan pertanyaan:")
-
-    if st.button("Kirim"):
-        if agent:
+if mode == "Python Agent":
+    if uploaded_files:
+        dfs = {}
+        for uploaded_file in uploaded_files:
             try:
-                answer = agent.run(user_input)
-                st.success(answer)
-            except Exception as e:
-                st.error(f"❌ Error saat agent run: {e}")
-        else:
-            st.warning("⚠️ Belum ada dataset/DB yang dimuat.")
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                elif uploaded_file.name.endswith(".xlsx"):
+                    df = pd.read_excel(uploaded_file)
+                else:
+                    raise ValueError("Format file tidak didukung")
 
-    if client:
-        st.markdown("---")
-        st.write("🔹 Test langsung ke OpenAI official SDK (bypass LangChain)")
-        try:
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": "Hello, are you working?"}],
-                max_tokens=30,
+                dfs[uploaded_file.name] = df
+
+                # Buat agent dataframe
+                agent_df = create_pandas_dataframe_agent(
+                    llm,
+                    df,
+                    verbose=True,
+                    allow_dangerous_code=True,  # patch penting
+                )
+                tools.append(
+                    Tool(
+                        name=f"Dataframe_{uploaded_file.name}",
+                        func=agent_df.run,
+                        description=f"Analisis dataset {uploaded_file.name}",
+                    )
+                )
+                st.success(f"✅ {uploaded_file.name} berhasil dimuat.")
+            except Exception as e:
+                st.error(f"Gagal membaca {uploaded_file.name}: {e}")
+    else:
+        st.info("Upload minimal 1 file CSV/XLSX untuk analisis.")
+
+elif mode == "MySQL Agent":
+    try:
+        db = SQLDatabase.from_uri(sql_uri)
+        db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
+        tools.append(
+            Tool(
+                name="MySQL",
+                func=db_chain.run,
+                description="Jalankan query analisis pada database MySQL",
             )
-            st.info(f"SDK response: {resp.choices[0].message.content}")
-        except Exception as e:
-            st.error(f"❌ SDK error: {e}")
+        )
+        st.success("✅ Koneksi MySQL berhasil.")
+    except Exception as e:
+        st.error(f"Gagal konek MySQL: {e}")
+
+# --- Agent ---
+agent = None
+if tools and llm:
+    agent = initialize_agent(
+        tools=tools,
+        llm=llm,
+        agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
+        memory=memory,
+        verbose=True,
+        handle_parsing_errors=True,
+    )
+
+# --- Chat UI ---
+if agent:
+    st.subheader("💬 Chat dengan Data / Database")
+    user_input = st.chat_input("Ketik pertanyaan...")
+    if user_input:
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        with st.chat_message("assistant"):
+            try:
+                response = agent.run(user_input)
+                st.markdown(response)
+            except Exception as e:
+                st.error(f"Error: {e}")
