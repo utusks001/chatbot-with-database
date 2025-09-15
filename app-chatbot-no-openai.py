@@ -6,7 +6,7 @@ from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain.schema import Document
 from langchain_community.vectorstores import FAISS
-from sentence_transformers import SentenceTransformer
+from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.chat_models import ChatOpenAI
 from langsmith import Client
 
@@ -47,7 +47,7 @@ if uploaded_file:
     st.write(f"**Kolom Numerik:** {numeric_cols}")
     st.write(f"**Kolom Kategori:** {categorical_cols}")
 
-    # --- Advanced RAG: Chunking + Embeddings ---
+    # --- Advanced RAG: Chunking + HuggingFaceEmbeddings + FAISS ---
     if "vectorstore" not in st.session_state:
         st.write("Membuat embeddings HuggingFace untuk Advanced RAG...")
         all_docs = []
@@ -57,12 +57,13 @@ if uploaded_file:
             docs = [Document(page_content=str(r)) for r in records]
             all_docs.extend(docs)
 
-        hf_model = SentenceTransformer('all-MiniLM-L6-v2')
+        # --- HuggingFaceEmbeddings fix ---
+        hf_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-        # --- FAISS fixed: from_documents dengan embedding callable ---
+        # --- FAISS vectorstore ---
         st.session_state.vectorstore = FAISS.from_documents(
             documents=all_docs,
-            embedding=hf_model.encode
+            embedding=hf_embeddings
         )
         st.session_state.vectorstore_version = 1
 
