@@ -1,136 +1,109 @@
 # app-langgraph.py 
+# app-langgraph.py
 import os
-import streamlit as st
+import sqlite3
+import traceback
 from dotenv import load_dotenv
 
-# LangChain / LangGraph imports
-from langchain_openai import ChatOpenAI
-from langchain_experimental.tools import PythonREPLTool
-from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain_community.utilities import SQLDatabase
-from langchain_experimental.sql import SQLDatabaseChain
-from langchain.agents import initialize_agent, AgentType
-from langchain.memory import ConversationBufferMemory
-import pandas as pd
-
-# --- Load environment ---
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")  # wajib kalau pakai sk-proj
-LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-# --- Setup OpenAI Client ---
 from openai import OpenAI
 
-client = None
-if OPENAI_API_KEY:
-    if OPENAI_API_KEY.startswith("sk-proj"):
-        if not OPENAI_PROJECT_ID:
-            st.error("🔑 API key bertipe sk-proj, tapi OPENAI_PROJECT_ID tidak ditemukan di .env")
-        else:
-            client = OpenAI(api_key=OPENAI_API_KEY, project=OPENAI_PROJECT_ID)
-    else:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-else:
-    st.error("❌ OPENAI_API_KEY tidak ditemukan di .env")
+from langchain_openai import ChatOpenAI
+from langchain.agents import Tool
+from langchain_experimental.sql import SQLDatabaseChain
+from langchain.sql_database import SQLDatabase
+from langchain_experimental.tools.python.tool import PythonREPLTool
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Chatbot Data Analysis", layout="wide")
-st.title("🤖 Chatbot Data Analysis dengan LangGraph + LangSmith")
+# ============ Load ENV ============
+load_dotenv()
 
-st.sidebar.header("Pengaturan")
-mode = st.sidebar.radio("Pilih Mode Analisis", ["Python Agent", "SQL Agent"])
-uploaded_file = st.sidebar.file_uploader("Upload Data (CSV/XLSX)", type=["csv", "xlsx"])
-sql_uri = st.sidebar.text_input("SQLite URI untuk SQL Agent", value="sqlite:///sample.db")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
 
-# Tombol uji API key
-if client and st.sidebar.button("🔑 Test API Key"):
-    try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": "Halo, apakah API key saya berfungsi?"}],
-            max_tokens=50,
+if not OPENAI_API_KEY:
+    raise ValueError("❌ OPENAI_API_KEY tidak ditemukan di .env")
+
+# Kalau key pakai format baru sk-proj-... maka project wajib diisi
+if OPENAI_API_KEY.startswith("sk-proj-"):
+    if not OPENAI_PROJECT_ID:
+        raise ValueError(
+            "❌ OPENAI_PROJECT_ID wajib diisi di .env untuk key sk-proj-..."
         )
-        st.sidebar.success("✅ API key valid")
-        st.sidebar.write(response.choices[0].message.content)
+    client = OpenAI(api_key=OPENAI_API_KEY, project=OPENAI_PROJECT_ID)
+else:
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+# ============ Tester dengan OpenAI official ============
+def test_openai():
+    try:
+        print("✅ Menguji koneksi OpenAI...")
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Halo, apakah koneksi API berhasil?"}],
+        )
+        print("OpenAI response:", resp.choices[0].message.content)
     except Exception as e:
-        st.sidebar.error(f"❌ API key gagal: {e}")
+        print("❌ Gagal test OpenAI:", e)
+        traceback.print_exc()
 
-# --- LLM setup untuk LangChain ---
-if OPENAI_API_KEY:
+# ============ Setup SQLite Dummy DB ============
+def init_db():
+    conn = sqlite3.connect("test.db")
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+    cur.execute("DELETE FROM users")
+    cur.executemany(
+        "INSERT INTO users (name, age) VALUES (?, ?)",
+        [("Alice", 25), ("Bob", 30), ("Charlie", 35)],
+    )
+    conn.commit()
+    conn.close()
+
+# ============ LangChain Setup ============
+def build_agents():
+    # DB Agent
+    db = SQLDatabase.from_uri("sqlite:///test.db")
     llm = ChatOpenAI(
-        openai_api_key=OPENAI_API_KEY,
-        model=MODEL,
+        model="gpt-4o-mini",
         temperature=0,
-        streaming=True,
+        api_key=OPENAI_API_KEY,
     )
-else:
-    llm = None
+    db_chain = SQLDatabaseChain(llm=llm, database=db, verbose=True)
 
-# --- Memory ---
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
-# --- Tools ---
-tools = []
-if llm:
-    if mode == "Python Agent":
-        if uploaded_file:
-            try:
-                if uploaded_file.name.endswith(".csv"):
-                    df = pd.read_csv(uploaded_file)
-                elif uploaded_file.name.endswith(".xlsx"):
-                    df = pd.read_excel(uploaded_file)
-                else:
-                    raise ValueError("Format file tidak didukung.")
-
-                pandas_agent = create_pandas_dataframe_agent(
-                    llm,
-                    df,
-                    verbose=True,
-                    handle_parsing_errors=True,
-                    allow_dangerous_code=True,  # izinkan eksekusi kode Python hanya untuk pandas agent
-                )
-                tools.append(PythonREPLTool())
-                tools.extend(pandas_agent.tools)
-                st.success(f"File **{uploaded_file.name}** berhasil dimuat.")
-            except Exception as e:
-                st.error(f"Gagal membaca file: {e}")
-        else:
-            st.warning("Upload file CSV/XLSX untuk analisis dengan Python Agent.")
-
-    if mode == "SQL Agent":
-        try:
-            db = SQLDatabase.from_uri(sql_uri)
-            db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
-            tools.append(db_chain)
-            st.success("Koneksi database SQL berhasil.")
-        except Exception as e:
-            st.error(f"Gagal konek ke database: {e}")
-
-# --- Agent ---
-if tools:
-    agent = initialize_agent(
-        tools=tools,
-        llm=llm,
-        agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
-        memory=memory,
-        verbose=True,
-        handle_parsing_errors=True,
+    sql_tool = Tool(
+        name="SQL Database",
+        func=db_chain.run,
+        description="Gunakan untuk menjawab pertanyaan tentang database users",
     )
-else:
-    agent = None
 
-# --- Chat UI ---
-if agent:
-    st.subheader("💬 Chat dengan Data Anda")
-    user_input = st.chat_input("Ketik pertanyaan Anda...")
-    if user_input:
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        with st.chat_message("assistant"):
-            try:
-                response = agent.run(user_input)
-                st.markdown(response)
-            except Exception as e:
-                st.error(f"Error: {e}")
+    # Python REPL Agent
+    python_tool = PythonREPLTool()
+
+    return [sql_tool, python_tool]
+
+# ============ Main ============
+if __name__ == "__main__":
+    # Test koneksi OpenAI langsung
+    test_openai()
+
+    # Init DB dummy
+    init_db()
+
+    # Build agents
+    tools = build_agents()
+    print("✅ Tools tersedia:", [t.name for t in tools])
+
+    # Demo SQL Agent
+    try:
+        print("\n🔎 Query ke SQL Agent...")
+        result = tools[0].func("SELECT name FROM users WHERE age > 28;")
+        print("Hasil query:", result)
+    except Exception as e:
+        print("❌ Error SQL Agent:", e)
+
+    # Demo Python Agent
+    try:
+        print("\n🐍 Tes Python Agent...")
+        result = tools[1].run("2 + 3 * 5")
+        print("Hasil Python Agent:", result)
+    except Exception as e:
+        print("❌ Error Python Agent:", e)
