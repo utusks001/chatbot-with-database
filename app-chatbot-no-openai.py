@@ -36,7 +36,12 @@ uploaded_file = st.sidebar.file_uploader("Upload Excel/CSV", type=["csv","xls","
 
 if uploaded_file:
     # --- Load data dari UploadedFile ---
-    sheets = load_excel(uploaded_file)
+    try:
+        sheets = load_excel(uploaded_file)
+    except Exception as e:
+        st.error(f"Gagal membaca file: {e}")
+        st.stop()
+
     sheet_names = list(sheets.keys())
     selected_sheet = st.selectbox("Pilih Sheet", sheet_names)
     df = sheets[selected_sheet]
@@ -96,6 +101,7 @@ if uploaded_file:
             llm=llm,
             prompt=PromptTemplate(template="{input}", input_variables=["input"])
         )
+
         response = chain.run(prompt_template)
 
         # --- Simpan chat history ---
