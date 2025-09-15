@@ -66,7 +66,11 @@ if mode == "Python Agent":
                 raise ValueError("Format file tidak didukung.")
 
             pandas_agent = create_pandas_dataframe_agent(
-                llm, df, verbose=True, handle_parsing_errors=True
+                llm,
+                df,
+                verbose=True,
+                handle_parsing_errors=True,
+                allow_dangerous_code=True,  # izinkan eksekusi kode Python hanya untuk pandas agent
             )
             tools.append(PythonREPLTool())
             tools.extend(pandas_agent.tools)
