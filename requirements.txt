@@ -1,9 +1,6 @@
 PyPDF2
 python-docx
 python-pptx
-langgraph
-langchain-google-genai
-langchain-groq
 # openai>=1.40.0
 openai
 langchain-core
@@ -43,3 +40,8 @@ langchain
 sentence-transformers
 transformers
 torch
+scikit-learn
+google-generativeai
+langchain-google-genai
+langgraph
+langchain-groq
