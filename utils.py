@@ -4,23 +4,14 @@ from io import BytesIO, StringIO
 def load_excel(uploaded_file):
     """
     Load multi-sheet Excel atau CSV dari Streamlit UploadedFile.
-
-    Args:
-        uploaded_file: objek hasil st.file_uploader
-
-    Returns:
-        dict: {sheet_name: dataframe}
     """
-    # Gunakan uploaded_file.name untuk cek ekstensi
     filename = uploaded_file.name.lower()
 
     if filename.endswith('.csv'):
-        # CSV
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
         df = pd.read_csv(stringio)
         return {"Sheet1": df}
     elif filename.endswith(('.xls', '.xlsx')):
-        # Excel
         bytes_data = BytesIO(uploaded_file.getvalue())
         xls = pd.ExcelFile(bytes_data)
         return {sheet_name: xls.parse(sheet_name) for sheet_name in xls.sheet_names}
