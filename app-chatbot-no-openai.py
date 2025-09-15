@@ -3,94 +3,148 @@ import streamlit as st
 from dotenv import load_dotenv
 import pandas as pd
 
-# LangChain & Agents
+# LangChain
+from langchain_experimental.tools import PythonREPLTool
+from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_community.utilities import SQLDatabase
+from langchain_experimental.sql import SQLDatabaseChain
+from langchain.agents import initialize_agent, AgentType
+from langchain.memory import ConversationBufferMemory
+
+# LLM Providers
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
-from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain_experimental.sql import SQLDatabaseChain
-from langchain.utilities import SQLDatabase
 
-# Load environment
+# --- Load environment ---
 load_dotenv()
 
-# --- Select LLM provider ---
-def get_llm():
-    if os.getenv("GOOGLE_API_KEY"):
-        st.sidebar.success("✅ Using Google Gemini")
-        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    elif os.getenv("GROQ_API_KEY"):
-        st.sidebar.success("✅ Using Groq LLaMA/Mixtral")
-        return ChatGroq(model="llama-3.1-70b-versatile", temperature=0)
-    else:
-        st.sidebar.error("❌ No valid Google or Groq API key found")
-        return None
+# Default keys from .env
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-# --- UI ---
-st.set_page_config(page_title="LangGraph Multi-Agent (No OpenAI)", layout="wide")
-st.title("🤖 Chatbot with Python + MySQL Agent (No OpenAI)")
+# --- Streamlit UI ---
+st.set_page_config(page_title="Chatbot Multiprovider", layout="wide")
+st.title("🤖 Chatbot Multiprovider (Google Gemini + Groq fallback)")
 
-llm = get_llm()
-if not llm:
-    st.stop()
-
-# --- Multi-file upload (CSV/XLSX) ---
-uploaded_files = st.file_uploader(
-    "Upload CSV/XLSX files", type=["csv", "xlsx"], accept_multiple_files=True
+st.sidebar.header("⚙️ Pengaturan Provider")
+provider_mode = st.sidebar.radio(
+    "Pilih Provider",
+    ["Auto (Google→Groq)", "Google Gemini", "Groq"]
 )
 
-dfs = {}
-if uploaded_files:
-    for file in uploaded_files:
-        try:
-            if file.name.endswith(".csv"):
-                dfs[file.name] = pd.read_csv(file)
-            elif file.name.endswith(".xlsx"):
-                dfs[file.name] = pd.read_excel(file)
-        except Exception as e:
-            st.error(f"⚠️ Failed to load {file.name}: {e}")
+# Manual API key input
+if provider_mode in ["Google Gemini", "Auto (Google→Groq)"]:
+    GOOGLE_API_KEY = st.sidebar.text_input("🔑 Google API Key", value=GOOGLE_API_KEY, type="password")
 
-if dfs:
-    st.write("📂 Loaded datasets:", list(dfs.keys()))
-    selected_file = st.selectbox("Pick a dataset", list(dfs.keys()))
-    df = dfs[selected_file]
-    st.dataframe(df.head())
+if provider_mode in ["Groq", "Auto (Google→Groq)"]:
+    GROQ_API_KEY = st.sidebar.text_input("🔑 Groq API Key", value=GROQ_API_KEY, type="password")
 
-    # Python Agent
-    if st.checkbox("Enable Python Agent for Data Analysis"):
-        agent_df = create_pandas_dataframe_agent(
-            llm, df, verbose=True, allow_dangerous_code=True
-        )
-        query = st.text_input("Ask about the dataset:")
-        if query:
+mode = st.sidebar.radio("Mode Analisis", ["Python Agent", "SQL Agent"])
+uploaded_files = st.sidebar.file_uploader(
+    "Upload dataset (CSV/XLSX, multi-file)", type=["csv", "xlsx"], accept_multiple_files=True
+)
+sql_uri = st.sidebar.text_input("MySQL/SQLite URI", value="sqlite:///sample.db")
+
+# --- Memory ---
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
+# --- Provider Selection ---
+def get_llm():
+    if provider_mode == "Google Gemini":
+        if not GOOGLE_API_KEY:
+            st.error("Google API Key wajib diisi!")
+            return None
+        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY, temperature=0)
+
+    elif provider_mode == "Groq":
+        if not GROQ_API_KEY:
+            st.error("Groq API Key wajib diisi!")
+            return None
+        return ChatGroq(model="llama-3.3-70b-versati", api_key=GROQ_API_KEY, temperature=0)
+
+    elif provider_mode == "Auto (Google→Groq)":
+        # Try Google first
+        if GOOGLE_API_KEY:
             try:
-                response = agent_df.run(query)
-                st.success(response)
+                return ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY, temperature=0)
             except Exception as e:
-                st.error(f"⚠️ Agent error: {e}")
+                if "429" in str(e):
+                    st.warning("⚠️ Google quota habis, otomatis switch ke Groq...")
+                else:
+                    st.error(f"Google API error: {e}")
+        # Fallback Groq
+        if GROQ_API_KEY:
+            return ChatGroq(model="llama-3.3-70b-versati", api_key=GROQ_API_KEY, temperature=0)
+        else:
+            st.error("Groq API Key belum diisi.")
+            return None
 
-# --- MySQL Agent ---
-if st.checkbox("Enable MySQL Agent"):
-    mysql_uri = st.text_input("MySQL URI (e.g. mysql+pymysql://user:pass@localhost/db)")
-    if mysql_uri:
+llm = get_llm()
+
+# --- Tools setup ---
+tools = []
+
+if mode == "Python Agent":
+    if uploaded_files:
         try:
-            db = SQLDatabase.from_uri(mysql_uri)
-            db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
-            sql_query = st.text_input("Ask about the database:")
-            if sql_query:
-                try:
-                    result = db_chain.run(sql_query)
-                    st.success(result)
-                except Exception as e:
-                    st.error(f"⚠️ SQL Agent error: {e}")
-        except Exception as e:
-            st.error(f"⚠️ DB connection error: {e}")
+            dfs = {}
+            for file in uploaded_files:
+                if file.name.endswith(".csv"):
+                    dfs[file.name] = pd.read_csv(file)
+                elif file.name.endswith(".xlsx"):
+                    dfs[file.name] = pd.read_excel(file)
 
-# --- General Chatbot ---
-st.subheader("💬 General Chat")
-user_input = st.text_input("Ask me anything:")
-if user_input:
+            # Jika banyak file, gabungkan ke satu agent
+            for name, df in dfs.items():
+                pandas_agent = create_pandas_dataframe_agent(
+                    llm,
+                    df,
+                    verbose=True,
+                    handle_parsing_errors=True,
+                    allow_dangerous_code=True,
+                )
+                tools.append(PythonREPLTool())
+                tools.extend(pandas_agent.tools)
+            st.success(f"{len(dfs)} file berhasil dimuat untuk Python Agent.")
+        except Exception as e:
+            st.error(f"Gagal membaca file: {e}")
+    else:
+        st.info("Upload satu atau lebih file CSV/XLSX untuk Python Agent.")
+
+elif mode == "SQL Agent":
     try:
-        response = llm.invoke(user_input)
-        st.info(response.content)
+        db = SQLDatabase.from_uri(sql_uri)
+        db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
+        tools.append(db_chain)
+        st.success("Koneksi database berhasil.")
     except Exception as e:
-        st.error(f"⚠️ Chat error: {e}")
+        st.error(f"Gagal konek ke database: {e}")
+
+# --- Agent setup ---
+agent = None
+if tools and llm:
+    agent = initialize_agent(
+        tools=tools,
+        llm=llm,
+        agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
+        memory=memory,
+        verbose=True,
+        handle_parsing_errors=True,
+    )
+
+# --- Chat UI ---
+if agent:
+    st.subheader("💬 Chat dengan Data Anda")
+    user_input = st.chat_input("Tanyakan sesuatu...")
+    if user_input:
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        with st.chat_message("assistant"):
+            try:
+                response = agent.run(user_input)
+                st.markdown(response)
+            except Exception as e:
+                if "429" in str(e):
+                    st.error("⚠️ Quota provider habis. Ganti API Key atau coba provider lain.")
+                else:
+                    st.error(f"Error: {e}")
