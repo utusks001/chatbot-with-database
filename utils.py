@@ -2,6 +2,7 @@ import pandas as pd
 from io import BytesIO, StringIO
 
 def load_excel(uploaded_file):
+    """Load multi-sheet Excel/CSV dari Streamlit UploadedFile."""
     filename = uploaded_file.name.lower()
     if filename.endswith('.csv'):
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
@@ -15,11 +16,13 @@ def load_excel(uploaded_file):
         raise ValueError("File harus berekstensi .csv, .xls, atau .xlsx")
 
 def detect_column_types(df):
+    """Deteksi kolom numerik vs kategori."""
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     categorical_cols = df.select_dtypes(exclude=['number']).columns.tolist()
     return numeric_cols, categorical_cols
 
 def chunk_dataframe(df, chunk_size=5000):
+    """Chunk dataframe besar menjadi potongan untuk RAG."""
     chunks = []
     for i in range(0, len(df), chunk_size):
         chunks.append(df.iloc[i:i+chunk_size])
