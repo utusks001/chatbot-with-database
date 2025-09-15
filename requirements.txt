@@ -32,7 +32,8 @@ matplotlib
 seaborn
 faiss-cpu
 tqdm
-langchain-experimental>=0.0.57
+# langchain-experimental>=0.0.57
+langchain-experimental
 langchain-openai>=0.1.0
 # langsmith>=0.1.0
 langsmith
