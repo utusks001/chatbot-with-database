@@ -2,11 +2,7 @@ import pandas as pd
 from io import BytesIO, StringIO
 
 def load_excel(uploaded_file):
-    """
-    Load multi-sheet Excel atau CSV dari Streamlit UploadedFile.
-    """
     filename = uploaded_file.name.lower()
-
     if filename.endswith('.csv'):
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
         df = pd.read_csv(stringio)
@@ -24,9 +20,6 @@ def detect_column_types(df):
     return numeric_cols, categorical_cols
 
 def chunk_dataframe(df, chunk_size=5000):
-    """
-    Membagi DataFrame menjadi list DataFrame kecil untuk RAG
-    """
     chunks = []
     for i in range(0, len(df), chunk_size):
         chunks.append(df.iloc[i:i+chunk_size])
