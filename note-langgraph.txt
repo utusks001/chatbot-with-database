@@ -34,8 +34,8 @@ streamlit run app.py
 
 --- .env.example ---
 # Contoh isi .env
-OPENAI_API_KEY=sk-xxxx
-LANGSMITH_API_KEY=ls-xxxx
+OPENAI_API_KEY=sk-xxxx  --> https://platform.openai.com/api-keys
+LANGSMITH_API_KEY=ls-xxxx   --> 
 # Optional: jika ingin memakai a different model or custom endpoints
 OPENAI_MODEL=gpt-4o-mini
 
