@@ -11,14 +11,13 @@ def load_excel(uploaded_file):
     Returns:
         dict: {sheet_name: dataframe}
     """
-    # Baca CSV
     if uploaded_file.name.endswith('.csv'):
-        # Jika CSV, gunakan StringIO
+        # CSV
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
         df = pd.read_csv(stringio)
         return {"Sheet1": df}
     else:
-        # Jika Excel, gunakan BytesIO
+        # Excel
         bytes_data = BytesIO(uploaded_file.getvalue())
         xls = pd.ExcelFile(bytes_data)
         return {sheet_name: xls.parse(sheet_name) for sheet_name in xls.sheet_names}
