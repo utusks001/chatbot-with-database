@@ -125,10 +125,10 @@ if uploaded_file is not None:
     st.write(df.describe(include="all"))
 
     if not num_df.empty:
-        st.write("**Correlation Heatmap**")
-        fig, ax = plt.subplots(figsize=(5, 3))
-        sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
-        st.pyplot(fig)
+    st.write("**Correlation Heatmap**")
+    fig, ax = plt.subplots(figsize=(5, 3))
+    sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
+    st.pyplot(fig)
     
     # ===== Inisialisasi Chatbot (per kombinasi sheet) =====
     agent_key = f"agent_{sheet_label}"
@@ -170,4 +170,3 @@ if uploaded_file is not None:
                 st.session_state.messages.append(
                     {"role": "assistant", "content": "Maaf, terjadi kesalahan saat memproses permintaan."}
                 )
-
