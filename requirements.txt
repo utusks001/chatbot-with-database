@@ -1,16 +1,7 @@
-PyPDF2
-python-docx
-python-pptx
-# openai>=1.40.0
-openai
-langchain-core
-Pillow
-requests
 xlrd==1.2.0   # untuk .xls (versi baru xlrd drop dukungan xlsx)
 # streamlit>=1.28.0
 streamlit
 python-dotenv
-pandas>=2.0.0
 openpyxl
 # Database
 sqlalchemy>=2.0.0
@@ -19,6 +10,7 @@ psycopg2-binary
 mysql-connector-python
 pymysql
 # LangChain core
+langchain-core
 # langchain-community>=0.2.0
 langchain-community
 pandas
@@ -29,36 +21,42 @@ matplotlib
 seaborn
 faiss-cpu
 tqdm
-# langchain-experimental>=0.0.57
+
 langchain-experimental
 langchain-openai>=0.1.0
 # langsmith>=0.1.0
 langsmith
 streamlit-chat
-langchain
-# langchain==0.1.5
 sentence-transformers
 transformers
-torch
-streamlit
+toml
 pandas
+# pandas>=2.0.0
 matplotlib
 seaborn
-python-docx
-python-pptx
-PyPDF2
-pillow
-easyocr
+scikit-learn
+Pillow
+requests
+
+# LangChain & Vectorstore
 langchain
+# langchain==0.1.5
 langchain-experimental
+# langchain-experimental>=0.0.57
 langchain-community
 faiss-cpu
-sentence-transformers
-python-dotenv
-toml
-scikit-learn
+
+# Dokumen loaders
+PyPDF2
+python-docx
+python-pptx
+
+# OCR
+easyocr
+torch
+torchvision
+
 google-generativeai
 langchain-google-genai
 langgraph
 langchain-groq
-easyocr
