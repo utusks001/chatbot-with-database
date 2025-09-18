@@ -1,23 +1,30 @@
 # app-multisheet.py
 
 import streamlit as st
-import os, io, requests
+import os, io
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from pathlib import Path
+import toml
 from dotenv import load_dotenv, set_key
-from PyPDF2 import PdfReader
-import docx
-from pptx import Presentation
 
+# LangChain & RAG
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
+
+# File loaders
+from PyPDF2 import PdfReader
+import docx
+from pptx import Presentation
+import easyocr
+from PIL import Image
+import requests
 
 # Load dotenv kalau lokal
 dotenv_path = Path(".env")
@@ -28,61 +35,37 @@ if dotenv_path.exists():
 def is_streamlit_cloud():
     return os.environ.get("STREAMLIT_RUNTIME") is not None
 
-# ====== Sidebar API Key ======
+# ====== Sidebar API Key (Google Gemini) ======
 with st.sidebar:
     st.header("🔑 Konfigurasi API Key")
 
     GOOGLE_API_KEY = (
-        st.session_state.get("GOOGLE_API_KEY")
-        or st.secrets.get("GOOGLE_API_KEY", "")
+        st.secrets.get("GOOGLE_API_KEY", "")
         or os.getenv("GOOGLE_API_KEY", "")
     )
 
-    new_key = st.text_input(
-        "Masukkan / Ganti GOOGLE_API_KEY",
-        type="password",
-        placeholder="Paste API Key baru di sini"
-    )
+    if not GOOGLE_API_KEY:
+        GOOGLE_API_KEY = st.text_input(
+            "Masukkan GOOGLE_API_KEY (buat di https://aistudio.google.com/apikey)",
+            type="password"
+        )
+        if GOOGLE_API_KEY:
+            os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+            st.session_state["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+            st.success("✅ GOOGLE_API_KEY berhasil dimasukkan")
 
-    if new_key:
-        os.environ["GOOGLE_API_KEY"] = new_key
-        st.session_state["GOOGLE_API_KEY"] = new_key
-        st.success("✅ API Key baru berhasil diset")
-        if is_streamlit_cloud():
-            st.info("ℹ️ Kalau mau permanen → simpan di Settings → Secrets")
-        else:
-            set_key(dotenv_path, "GOOGLE_API_KEY", new_key)
-            st.success("✅ API Key juga disimpan ke .env (lokal)")
-    elif GOOGLE_API_KEY:
-        os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-        st.session_state["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-        st.success("✅ GOOGLE_API_KEY aktif")
+            if is_streamlit_cloud():
+                st.info("ℹ️ Running di Streamlit Cloud → gunakan Settings → Secrets untuk simpan permanen")
+            else:
+                set_key(dotenv_path, "GOOGLE_API_KEY", GOOGLE_API_KEY)
+                st.success("✅ API Key disimpan ke .env (lokal)")
     else:
-        st.warning("⚠️ Belum ada GOOGLE_API_KEY. Masukkan di atas untuk aktifkan.")
-
-    # OCR.Space API Key
-    OCR_SPACE_API_KEY = (
-        st.session_state.get("OCR_SPACE_API_KEY")
-        or st.secrets.get("OCR_SPACE_API_KEY", "")
-        or os.getenv("OCR_SPACE_API_KEY", "")
-    )
-
-    new_ocr_key = st.text_input(
-        "Masukkan / Ganti OCR_SPACE_API_KEY",
-        type="password",
-        placeholder="Paste OCR API Key (opsional)"
-    )
-
-    if new_ocr_key:
-        os.environ["OCR_SPACE_API_KEY"] = new_ocr_key
-        st.session_state["OCR_SPACE_API_KEY"] = new_ocr_key
-        st.success("✅ OCR_SPACE_API_KEY berhasil diset")
+        st.success("✅ GOOGLE_API_KEY berhasil dimuat")
 
     # Embeddings toggle
     st.subheader("⚙️ Embeddings Settings")
     use_hf_embeddings = st.checkbox("Pakai HuggingFace embeddings saja", value=False)
     st.session_state["USE_HF_EMBEDDINGS"] = use_hf_embeddings
-
 
 # ====== Helper Functions ======
 def safe_describe(df: pd.DataFrame):
@@ -101,36 +84,36 @@ def detect_data_types(df: pd.DataFrame):
     numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
     return categorical_cols, numeric_cols
 
+# ====== OCR Helper ======
+ocr_reader = easyocr.Reader(["en"], gpu=False)
 
-# ====== OCR Helper (OCR.Space) ======
-def ocr_extract_text(file):
-    """Ekstrak teks dari image pakai OCR.Space API"""
-    api_key = os.getenv("OCR_SPACE_API_KEY", "")
-    if not api_key:
-        st.error("❌ OCR_SPACE_API_KEY tidak tersedia. Masukkan di sidebar.")
-        return ""
+def ocr_image(file):
+    img = Image.open(file)
+    results = ocr_reader.readtext(img)
+    text = "\n".join([res[1] for res in results])
 
-    url = "https://api.ocr.space/parse/image"
-    payload = {"apikey": api_key, "language": "eng"}
-    files = {"file": (file.name, file, file.type)}
+    # OCR.Space sebagai fallback kalau ada API key
+    OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "")
+    if OCR_SPACE_API_KEY:
+        try:
+            file.seek(0)
+            resp = requests.post(
+                "https://api.ocr.space/parse/image",
+                files={"file": file},
+                data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
+            )
+            data = resp.json()
+            if data.get("ParsedResults"):
+                ocrspace_text = data["ParsedResults"][0].get("ParsedText", "")
+                text += "\n" + ocrspace_text
+        except Exception as e:
+            st.warning(f"⚠️ OCR.Space error: {e}")
 
-    try:
-        resp = requests.post(url, files=files, data=payload, timeout=60)
-        result = resp.json()
-        if result.get("IsErroredOnProcessing"):
-            st.error(f"OCR error: {result.get('ErrorMessage')}")
-            return ""
-        return result["ParsedResults"][0]["ParsedText"].strip()
-    except Exception as e:
-        st.error(f"OCR request gagal: {e}")
-        return ""
-
+    return text
 
 # ====== Build Vectorstore ======
 def build_vectorstore(files):
-    """Bangun vectorstore dari dokumen upload (multi-file)."""
     docs = []
-
     for file in files:
         name = file.name
 
@@ -166,10 +149,8 @@ def build_vectorstore(files):
             docs.append(Document(page_content=text, metadata={"source": name}))
 
         elif name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
-            text = ocr_extract_text(file)
+            text = ocr_image(file)
             docs.append(Document(page_content=text, metadata={"source": name}))
-            # pakai HuggingFace embeddings langsung untuk image
-            st.info(f"📸 {name} → OCR selesai, pakai HuggingFace embeddings")
 
         else:
             try:
@@ -178,11 +159,9 @@ def build_vectorstore(files):
             except Exception:
                 pass
 
-    # Split dokumen
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     split_docs = splitter.split_documents(docs)
 
-    # ====== Embeddings Selection ======
     if st.session_state.get("USE_HF_EMBEDDINGS", False):
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         return FAISS.from_documents(split_docs, embeddings)
@@ -194,14 +173,10 @@ def build_vectorstore(files):
         )
         return FAISS.from_documents(split_docs, embeddings)
     except Exception as e:
-        if "429" in str(e):
-            st.error("❌ Kuota Gemini embeddings habis. Masukkan API Key baru di sidebar.")
-        else:
-            st.warning(f"⚠️ Gagal pakai Gemini embeddings ({e}). Fallback ke HuggingFace.")
+        st.warning(f"⚠️ Fallback ke HuggingFace embeddings ({e})")
         st.session_state["USE_HF_EMBEDDINGS"] = True
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         return FAISS.from_documents(split_docs, embeddings)
-
 
 # ====== Main App ======
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
@@ -245,38 +220,15 @@ with tab1:
             sheet_label = ", ".join(selected_sheets)
 
         st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
-        
-        # Preview data
-        st.write("**Head (10):**")
         st.dataframe(df.head(10))
-        st.write("**Tail (10):**")
-        st.dataframe(df.tail(10))
-        
+
         categorical_cols, numeric_cols = detect_data_types(df)
-        st.write("**Ringkasan Kolom**")
         st.write(f"Kolom Numerik: {numeric_cols}")
         st.write(f"Kolom Kategorikal: {categorical_cols}")
-        
-        st.write("**Info():**")
         st.text(df_info_text(df))
-        
         st.write(f"**Data shape:** {df.shape}")  
-        
-        # Missing values
-        st.write("Missing Values :")
-        st.write(df.isnull().sum())
-        
-        # Duplicates
-        duplicates_count = df.duplicated().sum()
-        st.write(f"Number of Duplicates : {duplicates_count}")
-        
-        df.drop_duplicates(inplace=True)
-        
-        # Describe
-        st.write("**Describe():**")
         st.dataframe(safe_describe(df))
-        
-        # Correlation heatmap
+
         num_df = df.select_dtypes(include="number")
         if not num_df.empty:
             st.write("**Correlation Heatmap**")
@@ -284,7 +236,6 @@ with tab1:
             sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
             st.pyplot(fig)
 
-        # ====== Chatbot Data Analysis ======
         if os.getenv("GOOGLE_API_KEY"):
             llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
@@ -292,7 +243,6 @@ with tab1:
                 temperature=0.2
             )
         else:
-            st.warning("⚠️ Tidak ada API Key, chatbot nonaktif.")
             llm = None
 
         if llm:
@@ -314,7 +264,6 @@ with tab1:
                         {preview}
 
                         Pertanyaan: {user_query}
-                        Berikan jawaban analisis statistik atau Python jika perlu.
                         """
                         response = llm.invoke(prompt).content
                         st.chat_message("assistant").markdown(response)
@@ -322,10 +271,8 @@ with tab1:
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
 
-            # tampilkan history
             for role, msg in st.session_state.chat_history:
                 st.chat_message(role).markdown(msg)
-
 
 # ========== MODE 2: RAG Advanced ==========
 with tab2:
@@ -343,36 +290,34 @@ with tab2:
         vectorstore = build_vectorstore(uploaded_files)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        if "qa_chain" not in st.session_state:
-            if os.getenv("GOOGLE_API_KEY"):
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash",
-                    google_api_key=os.getenv("GOOGLE_API_KEY")
-                )
-            else:
-                st.stop()
+        if os.getenv("GOOGLE_API_KEY"):
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                google_api_key=os.getenv("GOOGLE_API_KEY")
+            )
+        else:
+            llm = None
 
-            st.session_state.qa_chain = RetrievalQA.from_chain_type(
+        if llm:
+            qa_chain = RetrievalQA.from_chain_type(
                 llm=llm,
                 retriever=retriever,
                 return_source_documents=True
             )
             st.success("✅ Chatbot RAG siap digunakan")
 
-        user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
-        if user_query:
-            st.chat_message("user").markdown(user_query)
-
-            with st.spinner("🔎 Menganalisis dokumen..."):
-                try:
-                    result = st.session_state.qa_chain({"query": user_query})
-                    answer = result["result"]
-                    sources = result.get("source_documents", [])
-
-                    st.chat_message("assistant").markdown(answer)
-                    if sources:
-                        st.write("**Sumber:**")
-                        for s in sources:
-                            st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
-                except Exception as e:
-                    st.error(f"❌ Error: {e}")
+            user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
+            if user_query:
+                st.chat_message("user").markdown(user_query)
+                with st.spinner("🔎 Menganalisis dokumen..."):
+                    try:
+                        result = qa_chain({"query": user_query})
+                        answer = result["result"]
+                        sources = result.get("source_documents", [])
+                        st.chat_message("assistant").markdown(answer)
+                        if sources:
+                            st.write("**Sumber:**")
+                            for s in sources:
+                                st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
+                    except Exception as e:
+                        st.error(f"❌ Error: {e}")
