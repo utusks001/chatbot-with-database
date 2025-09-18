@@ -10,29 +10,60 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from utils1 import detect_data_types, recommend_and_plot
-
-# LangChain and Google Generative AI imports
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents.agent_types import AgentType
 
-# ========= Setup LangSmith (opsional, pakai fallback) =========
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_API_KEY"] = st.secrets.get("LANGCHAIN_API_KEY", "")
+from pathlib import Path
+import toml
+from dotenv import load_dotenv, set_key
 
-# ========= Sidebar for chat history + API Key =========
+# ========== Load .env kalau ada ==========
+dotenv_path = Path(".env")
+if dotenv_path.exists():
+    load_dotenv(dotenv_path)
+
+# ========== Setup LangSmith ==========
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"] = st.secrets.get("LANGCHAIN_API_KEY", os.getenv("LANGCHAIN_API_KEY", ""))
+
+# ========== Sidebar ==========
 with st.sidebar:
-    st.header("🔑 Konfigurasi")
-    # Coba ambil dari secrets dulu
-    GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
-    # Kalau kosong, izinkan user isi manual
+    st.header("🔑 Konfigurasi API Key")
+    
+    # Ambil key dari secrets atau .env
+    GOOGLE_API_KEY = (
+        st.secrets.get("GOOGLE_API_KEY", "")
+        or os.getenv("GOOGLE_API_KEY", "")
+    )
+    
+    # Kalau kosong, user bisa input manual
     if not GOOGLE_API_KEY:
         GOOGLE_API_KEY = st.text_input("Buat GOOGLE API KEY baru pada https://aistudio.google.com/apikey kemudian copy dan paste disini", type="password")
         if GOOGLE_API_KEY:
             st.session_state["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-    else:
-        st.success("GOOGLE_API_KEY dari secrets berhasil dimuat ✅")
+            st.success("GOOGLE_API_KEY berhasil dimasukkan ✅")
 
+            # Opsi simpan
+            save_choice = st.radio("Simpan key ke mana?", ["Jangan simpan", ".env", "secrets.toml"])
+            if st.button("💾 Simpan API Key"):
+                if save_choice == ".env":
+                    set_key(dotenv_path, "GOOGLE_API_KEY", GOOGLE_API_KEY)
+                    st.success("✅ API Key disimpan ke .env")
+                elif save_choice == "secrets.toml":
+                    secrets_path = Path(".streamlit/secrets.toml")
+                    secrets_path.parent.mkdir(exist_ok=True)
+                    secrets = {}
+                    if secrets_path.exists():
+                        secrets = toml.load(secrets_path)
+                    secrets["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+                    with open(secrets_path, "w") as f:
+                        toml.dump(secrets, f)
+                    st.success("✅ API Key disimpan ke .streamlit/secrets.toml")
+    else:
+        st.success("GOOGLE_API_KEY berhasil dimuat ✅")
+
+    # ===== Chat history =====
     st.header("Riwayat Chat")
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -52,9 +83,9 @@ def df_info_text(df: pd.DataFrame):
     df.info(buf=buf)
     return buf.getvalue()
 
-# ========= Main Streamlit App =========
+# ========= Main =========
 st.set_page_config(page_title="DataViz Chatbot", layout="wide")
-st.title("🤖 Chatbot Otomasi Analisis Data (didukung Google Gemini)")
+st.title("🤖 Chatbot Otomasi Analisis Data (Google Gemini)")
 
 uploaded_file = st.file_uploader(
     "Upload file Excel (.xls, .xlsx) atau CSV (.csv)", 
@@ -62,7 +93,7 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # ===== Load data =====
+    # Load data
     if uploaded_file.name.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
         st.session_state.dfs = {"CSV": df}
@@ -70,7 +101,7 @@ if uploaded_file is not None:
         xls = pd.ExcelFile(uploaded_file)
         st.session_state.dfs = {sheet: pd.read_excel(uploaded_file, sheet_name=sheet) for sheet in xls.sheet_names}
 
-    # ===== Sidebar multi-select =====
+    # Multi-select sheet
     with st.sidebar:
         st.subheader("📑 Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
@@ -80,7 +111,7 @@ if uploaded_file is not None:
         st.warning("Pilih minimal satu sheet untuk analisis.")
         st.stop()
 
-    # ===== Gabung jika multi-sheet =====
+    # Gabung data
     if len(selected_sheets) == 1:
         df = st.session_state.dfs[selected_sheets[0]]
         sheet_label = selected_sheets[0]
@@ -93,56 +124,23 @@ if uploaded_file is not None:
         df = pd.concat(df_list, ignore_index=True)
         sheet_label = ", ".join(selected_sheets)
 
-    # ===== Info file =====
+    # Info dataset
     st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
-    
-    # ===== Preview data =====
-    st.write("**Head (10):**")
     st.dataframe(df.head(10))
-    st.write("**Tail (10):**")
-    st.dataframe(df.tail(10))
-    
-    # ===== Ringkasan =====
-    categorical_cols, numeric_cols = detect_data_types(df)
-    st.write("**Ringkasan Kolom**")
-    st.write(f"Kolom Numerik: {numeric_cols}")
-    st.write(f"Kolom Kategorikal: {categorical_cols}")
-    
     st.write("**Info():**")
     st.text(df_info_text(df))
-    
-    st.write(f"**Data shape:** {df.shape}")
-    
-    st.write("**Data information:**")
-    for index, (col, dtype) in enumerate(zip(df.columns, df.dtypes)):
-        non_null_count = df[col].count()
-        st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
-    
-    missing_values = df.isnull().sum()
-    st.write("**Missing Values:**")
-    st.write(missing_values)
-    
-    duplicates_count = df.duplicated().sum()
-    st.write(f"**Number of Duplicates :** {duplicates_count}")
-    
-    df_no_dupes = df.drop_duplicates()
-    st.write(f"**Number of Duplicates Removed:** {len(df) - len(df_no_dupes)}")
-    
     st.write("**Describe():**")
     st.dataframe(safe_describe(df))
-    
-    st.write("**Summary Statistics:**")
-    st.write(df.describe(include="all"))
 
-    # ===== Correlation Heatmap =====
+    # Correlation Heatmap
     num_df = df.select_dtypes(include="number")
     if not num_df.empty:
         st.write("**Correlation Heatmap**")
         fig, ax = plt.subplots(figsize=(5, 3))
         sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
         st.pyplot(fig)
-    
-    # ===== Inisialisasi Chatbot (per kombinasi sheet) =====
+
+    # Inisialisasi agent
     agent_key = f"agent_{sheet_label}"
     if agent_key not in st.session_state and GOOGLE_API_KEY:
         try:
@@ -162,13 +160,11 @@ if uploaded_file is not None:
             st.error(f"Gagal inisialisasi chatbot: {e}")
             st.stop()
     elif not GOOGLE_API_KEY:
-        st.warning("⚠️ GOOGLE_API_KEY belum diisi. Masukkan di sidebar agar chatbot aktif.")
+        st.warning("⚠️ GOOGLE_API_KEY belum diisi.")
 
-    # ===== Chat input =====
+    # Chat input
     if GOOGLE_API_KEY:
-        st.subheader(f"Tanyakan Sesuatu Tentang Data (Sheet: {sheet_label})")
-        user_query = st.chat_input("Contoh: 'Berapa rata-rata pendapatan?'")
-
+        user_query = st.chat_input("Tanyakan sesuatu tentang data...")
         if user_query:
             st.session_state.messages.append({"role": "user", "content": user_query})
             with st.chat_message("user"):
@@ -181,7 +177,4 @@ if uploaded_file is not None:
                         st.markdown(response)
                         st.session_state.messages.append({"role": "assistant", "content": response})
                 except Exception as e:
-                    st.error(f"Maaf, terjadi kesalahan saat memproses permintaan: {e}")
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": "Maaf, terjadi kesalahan saat memproses permintaan."}
-                    )
+                    st.error(f"Error: {e}")
