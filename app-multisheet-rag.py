@@ -176,13 +176,18 @@ if menu == "📑 Data Analysis (Excel/CSV)":
             df = pd.read_excel(uploaded_file, sheet_name=sheet)
 
         st.write("### Preview Data")
-        st.dataframe(df.head())
+        st.dataframe(df.head(10))
+        st.dataframe(df.tail(10))
 
         st.write("### Info Data")
         st.text(df_info_text(df))
 
         st.write("### Statistik Deskriptif")
         st.dataframe(safe_describe(df))
+    
+        # Display summary statistics of the DataFrame
+        st.write("**Summary Statistics:**")
+    ````st.write(df.describe(include="all"))
 
         st.write("### Visualisasi")
         col_x = st.selectbox("Pilih kolom X", df.columns)
