@@ -39,11 +39,11 @@ toml
 # PyPDF2
 # python-docx
 # python-pptx
-# langchain
-# sentence-transformers
-# faiss-cpu
-# transformers
-# torch
+langchain
+sentence-transformers
+faiss-cpu
+transformers
+torch
 # 
 # 
 streamlit==1.26.1
@@ -56,11 +56,11 @@ PyPDF2==3.1.0
 python-docx==0.8.12
 python-pptx==0.6.21
 Pillow==10.1.0
-faiss-cpu==1.7.4.post2
-torch==2.1.0+cpu
-transformers==4.34.0
-sentence-transformers==2.2.2
-langchain==0.1.232
+# faiss-cpu==1.7.4.post2
+# torch==2.1.0+cpu
+# transformers==4.34.0
+# sentence-transformers==2.2.2
+# langchain==0.1.232
 # 
 # LangChain & Google Gemini
 langchain-google-genai
