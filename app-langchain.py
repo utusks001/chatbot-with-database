@@ -101,8 +101,8 @@ if uploaded_file is not None:
     st.write("                                             ")  
         
     # Remove duplicates
-    duplicates-removed = df.drop_duplicates(inplace=True)
-    st.write(f"Number of Duplicates Removed: {duplicates-removed}")
+    duplicates_removed = df.drop_duplicates(inplace=True)
+    st.write(f"Number of Duplicates Removed: {duplicates_removed}")
     st.write("                                             ")  
     
     # Display summary statistics of the DataFrame
