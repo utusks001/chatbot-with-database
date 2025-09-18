@@ -20,7 +20,25 @@ from langchain.agents.agent_types import AgentType
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_API_KEY"] = st.secrets.get("LANGCHAIN_API_KEY", "")
 
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+# ========= Sidebar for chat history + API Key =========
+with st.sidebar:
+    st.header("🔑 Konfigurasi")
+    # Coba ambil dari secrets dulu
+    GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+    # Kalau kosong, izinkan user isi manual
+    if not GOOGLE_API_KEY:
+        GOOGLE_API_KEY = st.text_input("Masukkan GOOGLE_API_KEY", type="password")
+        if GOOGLE_API_KEY:
+            st.session_state["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+    else:
+        st.success("GOOGLE_API_KEY dari secrets berhasil dimuat ✅")
+
+    st.header("Riwayat Chat")
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
 # ========= Helper Functions =========
 def safe_describe(df: pd.DataFrame):
@@ -38,15 +56,6 @@ def df_info_text(df: pd.DataFrame):
 st.set_page_config(page_title="DataViz Chatbot", layout="wide")
 st.title("🤖 Chatbot Otomasi Analisis Data (didukung Google Gemini)")
 
-# Sidebar for chat history
-with st.sidebar:
-    st.header("Riwayat Chat")
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
 uploaded_file = st.file_uploader(
     "Upload file Excel (.xls, .xlsx) atau CSV (.csv)", 
     type=["csv", "xls", "xlsx"]
@@ -63,7 +72,7 @@ if uploaded_file is not None:
 
     # ===== Sidebar multi-select =====
     with st.sidebar:
-        st.subheader("Pilih Sheet")
+        st.subheader("📑 Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
         selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
 
@@ -153,7 +162,7 @@ if uploaded_file is not None:
             st.error(f"Gagal inisialisasi chatbot: {e}")
             st.stop()
     elif not GOOGLE_API_KEY:
-        st.warning("⚠️ GOOGLE_API_KEY belum diset. Chatbot nonaktif.")
+        st.warning("⚠️ GOOGLE_API_KEY belum diisi. Masukkan di sidebar agar chatbot aktif.")
 
     # ===== Chat input =====
     if GOOGLE_API_KEY:
