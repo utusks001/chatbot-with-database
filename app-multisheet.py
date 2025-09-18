@@ -13,63 +13,69 @@ from pathlib import Path
 import toml
 from dotenv import load_dotenv, set_key
 
-# LangChain / RAG
+# LangChain & LLM
+from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.agents.agent_types import AgentType
 from langchain.vectorstores import FAISS
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
 
-# ===================== ENV SETUP =====================
+# ========== Load .env kalau ada ==========
 dotenv_path = Path(".env")
 if dotenv_path.exists():
     load_dotenv(dotenv_path)
 
+# ========== Setup LangSmith ==========
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_API_KEY"] = st.secrets.get(
-    "LANGCHAIN_API_KEY", os.getenv("LANGCHAIN_API_KEY", "")
-)
+os.environ["LANGCHAIN_API_KEY"] = st.secrets.get("LANGCHAIN_API_KEY", os.getenv("LANGCHAIN_API_KEY", ""))
 
-# ===================== SIDEBAR =====================
+# ========== Sidebar API Key ==========
 with st.sidebar:
     st.header("🔑 Konfigurasi API Key")
 
+    # Fallback urutan key
     GOOGLE_API_KEY = (
-        st.secrets.get("GOOGLE_API_KEY", "")
+        st.session_state.get("GOOGLE_API_KEY", "")
+        or st.secrets.get("GOOGLE_API_KEY", "")
         or os.getenv("GOOGLE_API_KEY", "")
-        or st.session_state.get("GOOGLE_API_KEY", "")
     )
 
-    if not GOOGLE_API_KEY:
-        GOOGLE_API_KEY = st.text_input(
-            "Buat GOOGLE API KEY baru di https://aistudio.google.com/apikey lalu paste di sini",
-            type="password",
-        )
-        if GOOGLE_API_KEY:
+    api_key_input = st.text_input(
+        "Masukkan GOOGLE_API_KEY (buat baru di https://aistudio.google.com/apikey)",
+        type="password",
+        value=GOOGLE_API_KEY
+    )
+
+    if st.button("💾 Simpan API Key"):
+        if api_key_input.strip():
+            GOOGLE_API_KEY = api_key_input.strip()
             st.session_state["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-            st.success("GOOGLE_API_KEY berhasil dimasukkan ✅")
+            os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
-            # Opsi simpan
-            save_choice = st.radio(
-                "Simpan key ke mana?", ["Jangan simpan", ".env", "secrets.toml"]
-            )
-            if st.button("💾 Simpan API Key"):
-                if save_choice == ".env":
-                    set_key(dotenv_path, "GOOGLE_API_KEY", GOOGLE_API_KEY)
-                    st.success("✅ API Key disimpan ke .env")
-                elif save_choice == "secrets.toml":
-                    secrets_path = Path(".streamlit/secrets.toml")
-                    secrets_path.parent.mkdir(exist_ok=True)
-                    secrets = {}
-                    if secrets_path.exists():
-                        secrets = toml.load(secrets_path)
-                    secrets["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-                    with open(secrets_path, "w") as f:
-                        toml.dump(secrets, f)
-                    st.success("✅ API Key disimpan ke .streamlit/secrets.toml")
+            # Simpan ke .env
+            set_key(dotenv_path, "GOOGLE_API_KEY", GOOGLE_API_KEY)
+
+            # Simpan ke secrets.toml
+            secrets_path = Path(".streamlit/secrets.toml")
+            secrets_path.parent.mkdir(exist_ok=True)
+            secrets = {}
+            if secrets_path.exists():
+                secrets = toml.load(secrets_path)
+            secrets["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+            with open(secrets_path, "w") as f:
+                toml.dump(secrets, f)
+
+            st.success("✅ API Key berhasil disimpan!")
+        else:
+            st.error("API Key tidak boleh kosong!")
+
+    if GOOGLE_API_KEY:
+        st.success("GOOGLE_API_KEY aktif ✅")
     else:
-        st.success("GOOGLE_API_KEY berhasil dimuat ✅")
+        st.warning("⚠️ GOOGLE_API_KEY belum diisi, chatbot tidak bisa jalan.")
 
-    # Chat history
+    # ===== Chat history =====
     st.header("Riwayat Chat")
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -77,7 +83,7 @@ with st.sidebar:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-# ===================== HELPER =====================
+# ========= Helper Functions =========
 def safe_describe(df: pd.DataFrame):
     try:
         return df.describe(include="all").transpose()
@@ -89,39 +95,72 @@ def df_info_text(df: pd.DataFrame):
     df.info(buf=buf)
     return buf.getvalue()
 
-# ===================== MAIN =====================
-st.set_page_config(page_title="DataViz RAG Chatbot", layout="wide")
-st.title("🤖 Advanced RAG Chatbot Analisis Data (Google Gemini)")
+# ========= Main =========
+st.set_page_config(page_title="DataViz Chatbot + RAG", layout="wide")
+st.title("🤖 Chatbot Otomasi Analisis Data + Document RAG")
 
 uploaded_file = st.file_uploader(
-    "Upload file Excel (.xls, .xlsx) atau CSV (.csv)", type=["csv", "xls", "xlsx"]
+    "Upload file Excel (.xls, .xlsx), CSV (.csv), atau TXT/MD/PDF (.txt, .md, .pdf) untuk RAG", 
+    type=["csv", "xls", "xlsx", "txt", "md", "pdf"]
 )
 
 if uploaded_file is not None:
-    # Load data
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
         st.session_state.dfs = {"CSV": df}
-    else:
+    elif uploaded_file.name.endswith((".xls", ".xlsx")):
         xls = pd.ExcelFile(uploaded_file)
-        st.session_state.dfs = {
-            sheet: pd.read_excel(uploaded_file, sheet_name=sheet)
-            for sheet in xls.sheet_names
-        }
+        st.session_state.dfs = {s: pd.read_excel(uploaded_file, sheet_name=s) for s in xls.sheet_names}
+    else:
+        # ===== Document RAG mode =====
+        if not GOOGLE_API_KEY:
+            st.error("⚠️ Masukkan GOOGLE_API_KEY dulu untuk aktifkan RAG.")
+            st.stop()
 
-    # Multi-select sheet
+        text = uploaded_file.read().decode("utf-8", errors="ignore")
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = splitter.split_text(text)
+
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001", google_api_key=GOOGLE_API_KEY
+        )
+        vectorstore = FAISS.from_texts(docs, embeddings)
+        retriever = vectorstore.as_retriever()
+
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY)
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            retriever=retriever,
+            chain_type="stuff",
+        )
+
+        st.success("✅ RAG chatbot siap!")
+        query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
+        if query:
+            st.session_state.messages.append({"role": "user", "content": query})
+            with st.chat_message("user"):
+                st.markdown(query)
+
+            with st.spinner("Memproses dokumen..."):
+                try:
+                    response = qa_chain.run(query)
+                    with st.chat_message("assistant"):
+                        st.markdown(response)
+                        st.session_state.messages.append({"role": "assistant", "content": response})
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        st.stop()
+
+    # ========== Multi-sheet Excel/CSV ==========
     with st.sidebar:
         st.subheader("📑 Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
-        selected_sheets = st.multiselect(
-            "Sheet Aktif", sheet_names, default=sheet_names[:1]
-        )
+        selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
 
     if not selected_sheets:
         st.warning("Pilih minimal satu sheet untuk analisis.")
         st.stop()
 
-    # Gabung data
     if len(selected_sheets) == 1:
         df = st.session_state.dfs[selected_sheets[0]]
         sheet_label = selected_sheets[0]
@@ -134,7 +173,6 @@ if uploaded_file is not None:
         df = pd.concat(df_list, ignore_index=True)
         sheet_label = ", ".join(selected_sheets)
 
-    # ===================== DATA PREVIEW =====================
     st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
     st.dataframe(df.head(10))
     st.write("**Info():**")
@@ -150,68 +188,40 @@ if uploaded_file is not None:
         sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
         st.pyplot(fig)
 
-    # ===================== ADVANCED RAG =====================
-    if GOOGLE_API_KEY:
-        agent_key = f"rag_{sheet_label}"
-        if agent_key not in st.session_state:
-            try:
-                # Convert DF ke text (CSV string)
-                csv_text = df.to_csv(index=False)
-
-                # Split
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000, chunk_overlap=100
-                )
-                docs = text_splitter.create_documents([csv_text])
-
-                # Embeddings + Vectorstore
-                embeddings = GoogleGenerativeAIEmbeddings(
-                    model="models/embedding-001", google_api_key=GOOGLE_API_KEY
-                )
-                vectorstore = FAISS.from_documents(docs, embeddings)
-
-                retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY
-                )
-
-                qa_chain = RetrievalQA.from_chain_type(
-                    llm=llm, retriever=retriever, return_source_documents=True
-                )
-                st.session_state[agent_key] = qa_chain
-                st.success(f"RAG Chatbot siap! (Sheet: {sheet_label})")
-            except Exception as e:
-                st.error(f"Gagal inisialisasi RAG chatbot: {e}")
-                st.stop()
-    else:
+    # Inisialisasi agent
+    agent_key = f"agent_{sheet_label}"
+    if agent_key not in st.session_state and GOOGLE_API_KEY:
+        try:
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY
+            )
+            st.session_state[agent_key] = create_pandas_dataframe_agent(
+                llm,
+                df,
+                verbose=True,
+                agent_type=AgentType.OPENAI_FUNCTIONS,
+                allow_dangerous_code=True
+            )
+            st.success(f"Chatbot siap! (Sheet: {sheet_label})")
+        except Exception as e:
+            st.error(f"Gagal inisialisasi chatbot: {e}")
+            st.stop()
+    elif not GOOGLE_API_KEY:
         st.warning("⚠️ GOOGLE_API_KEY belum diisi.")
 
-    # ===================== CHAT INPUT =====================
+    # Chat input
     if GOOGLE_API_KEY:
-        user_query = st.chat_input("Tanyakan sesuatu tentang data (RAG)...")
+        user_query = st.chat_input("Tanyakan sesuatu tentang data...")
         if user_query:
             st.session_state.messages.append({"role": "user", "content": user_query})
             with st.chat_message("user"):
                 st.markdown(user_query)
 
-            with st.spinner("🔎 Mencari jawaban dengan RAG..."):
+            with st.spinner("Memproses..."):
                 try:
-                    response = st.session_state[agent_key].invoke(user_query)
-                    answer = response["result"]
-
+                    response = st.session_state[agent_key].run(user_query)
                     with st.chat_message("assistant"):
-                        st.markdown(answer)
-
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": answer}
-                    )
-
-                    # tampilkan sumber
-                    if "source_documents" in response:
-                        with st.expander("🔍 Sumber data"):
-                            for i, doc in enumerate(response["source_documents"]):
-                                st.markdown(f"**Chunk {i+1}:**")
-                                st.code(doc.page_content[:500] + "...")
+                        st.markdown(response)
+                        st.session_state.messages.append({"role": "assistant", "content": response})
                 except Exception as e:
                     st.error(f"Error: {e}")
