@@ -26,19 +26,18 @@
 # sentence-transformers
 # 
 langchain-community
-chromadb
 openpyxl
 python-dotenv
 toml
 # streamlit
-# pandas
-# matplotlib
-# seaborn
-# requests
-# pillow
-# PyPDF2
-# python-docx
-# python-pptx
+pandas
+matplotlib
+seaborn
+requests
+pillow
+PyPDF2
+python-docx
+python-pptx
 langchain
 sentence-transformers
 faiss-cpu
@@ -47,15 +46,15 @@ torch
 # 
 # 
 streamlit==1.26.1
-pandas==2.1.0
-matplotlib==3.8.1
-seaborn==0.12.3
-requests==2.32.0
-python-dotenv==1.0.1
-PyPDF2==3.1.0
-python-docx==0.8.12
-python-pptx==0.6.21
-Pillow==10.1.0
+# pandas==2.1.0
+# matplotlib==3.8.1
+# seaborn==0.12.3
+# requests==2.32.0
+# python-dotenv==1.0.1
+# PyPDF2==3.1.0
+# python-docx==0.8.12
+# python-pptx==0.6.21
+# Pillow==10.1.0
 # faiss-cpu==1.7.4.post2
 # torch==2.1.0+cpu
 # transformers==4.34.0
