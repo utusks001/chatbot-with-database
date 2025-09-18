@@ -1,17 +1,35 @@
-streamlit>=1.24.0
-pandas>=2.1.0
-matplotlib>=3.7.2
-seaborn>=0.12.2
-python-dotenv>=1.0.1
-toml>=0.10.2
-requests>=2.31.0
-PyPDF2>=3.0.1
-python-docx>=0.8.11
-python-pptx>=0.6.21
-transformers>=4.41.0
-torch>=2.1.0
-sentence-transformers>=2.2.2
-langchain>=1.0.0
-langchain-community>=0.0.276
-faiss-cpu>=1.7.4
-chromadb>=0.4.4
+streamlit
+pandas
+matplotlib
+seaborn
+python-dotenv
+toml
+requests
+PyPDF2
+python-docx
+python-pptx
+transformers
+torch
+sentence-transformers
+langchain
+langchain-community
+faiss-cpu
+chromadb
+# 
+# streamlit>=1.24.0
+# pandas>=2.1.0
+# matplotlib>=3.7.2
+# seaborn>=0.12.2
+# python-dotenv>=1.0.1
+# toml>=0.10.2
+# requests>=2.31.0
+# PyPDF2>=3.0.1
+# python-docx>=0.8.11
+# python-pptx>=0.6.21
+# transformers>=4.41.0
+# torch>=2.1.0
+# sentence-transformers>=2.2.2
+# langchain>=1.0.0
+# langchain-community>=0.0.276
+# faiss-cpu>=1.7.4
+# chromadb>=0.4.4
