@@ -45,19 +45,28 @@ if uploaded_file is not None:
         st.stop()
 
     st.subheader("Data yang Diunggah")
-    st.write(st.session_state.df.head())
-    
+    st.markdown(f"### 📄 Analisa: {uploaded_file} — {sheet_name}")
+    st.write("**Head (10):**")
+    st.write(st.session_state.df.head(10))
+    st.dataframe(df.head(10))
+    st.write("**Tail (10):**")
+    st.write(st.session_state.df.tail(10))
+    st.dataframe(df.tail(10))
+    st.write("**describe():**")
+    st.dataframe(safe_describe(xls))
+    st.write("**info():**")
+    st.text(df_info_text(xls))
+
     categorical_cols, numeric_cols = detect_data_types(st.session_state.df)
     st.subheader("Ringkasan Kolom")
     st.write(f"Kolom Numerik: {numeric_cols}")
     st.write(f"Kolom Kategorikal: {categorical_cols}")
 
-    st.subheader("Visualisasi Otomatis")
-    visualizations = recommend_and_plot(st.session_state.df, categorical_cols, numeric_cols)
-    for title, fig in visualizations.items():
-        st.write(f"**{title}**")
-        st.pyplot(fig)
-        plt.close(fig)
+
+    st.write("**describe():**")
+    st.dataframe(safe_describe(df))
+    st.write("**info():**")
+    st.text(df_info_text(df))
 
     if "agent_initialized" not in st.session_state:
         try:
