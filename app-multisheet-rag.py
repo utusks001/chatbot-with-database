@@ -32,11 +32,9 @@ dotenv_path = Path(".env")
 if dotenv_path.exists():
     load_dotenv(dotenv_path)
 
-
 # ====== Helper deteksi local vs Streamlit Cloud ======
 def is_streamlit_cloud():
     return os.environ.get("STREAMLIT_RUNTIME") is not None
-
 
 # ====== Sidebar API Key ======
 with st.sidebar:
@@ -70,7 +68,6 @@ with st.sidebar:
     use_hf_embeddings = st.checkbox("Pakai HuggingFace embeddings saja", value=False)
     st.session_state["USE_HF_EMBEDDINGS"] = use_hf_embeddings
 
-
 # ====== Helper Functions ======
 def safe_describe(df: pd.DataFrame):
     try:
@@ -78,12 +75,10 @@ def safe_describe(df: pd.DataFrame):
     except Exception as e:
         return pd.DataFrame({"Error": [str(e)]})
 
-
 def df_info_text(df: pd.DataFrame):
     buf = io.StringIO()
     df.info(buf=buf)
     return buf.getvalue()
-
 
 # ====== OCR Helper (EasyOCR) ======
 ocr_reader = easyocr.Reader(["en"], gpu=False)
@@ -93,7 +88,6 @@ def ocr_image(file):
     results = ocr_reader.readtext(img)
     text = "\n".join([res[1] for res in results])
     return text
-
 
 # ====== Build Vectorstore ======
 def build_vectorstore(files):
@@ -172,9 +166,7 @@ def build_vectorstore(files):
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
 st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + Gemini/HF)")
 
-
 menu = st.sidebar.radio("Pilih Mode", ["📊 Data Analysis", "📑 RAG Advanced"])
-
 
 # ========== MODE 1: Data Analysis ==========
 if menu == "📊 Data Analysis":
@@ -213,9 +205,56 @@ if menu == "📊 Data Analysis":
             sheet_label = ", ".join(selected_sheets)
 
         st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
+        
+        # Preview data
+        st.write("**Head (10):**")
         st.dataframe(df.head(10))
+        st.write("**Tail (10):**")
+        st.dataframe(df.tail(10))
+        
+        # Ringkasan kolom
+        categorical_cols, numeric_cols = detect_data_types(df)
+        st.write("**Ringkasan Kolom**")
+        st.write(f"Kolom Numerik: {numeric_cols}")
+        st.write(f"Kolom Kategorikal: {categorical_cols}")
+        
+        st.write("**Info():**")
         st.text(df_info_text(df))
+        
+        # Display the shape of the data
+        st.write(f"**Data shape:** {df.shape}")
+        st.write("                                             ")  
+        
+        # Display data information
+        st.write("**Data information:**")
+        # df.info()
+        for index, (col, dtype) in enumerate(zip(df.columns, df.dtypes)):
+                    non_null_count = df[col].count()
+                    st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
+        
+        # Check missing values again
+        missing_values = df.isnull().sum()
+        st.write("Missing Values :")
+        st.write(missing_values)
+        st.write("                                             ")  
+        
+        # Display the number of duplicates removed
+        duplicates_count = df.duplicated().sum()
+        st.write(f"Number of Duplicates : {duplicates_count}")
+        st.write("                                             ")  
+                
+        # Remove duplicates
+        duplicates_removed = df.drop_duplicates(inplace=True)
+        st.write(f"Number of Duplicates Removed: {duplicates_removed}")
+        st.write("                                             ")  
+        
+        # Display Describe
+        st.write("**Describe():**")
         st.dataframe(safe_describe(df))
+        
+        # Display summary statistics of the DataFrame
+        st.write("**Summary Statistics:**")
+        st.write(df.describe(include="all"))
 
         # Correlation heatmap
         num_df = df.select_dtypes(include="number")
@@ -258,7 +297,6 @@ if menu == "📊 Data Analysis":
                             st.markdown(response)
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
-
 
 # ========== MODE 2: RAG Advanced ==========
 if menu == "📑 RAG Advanced":
