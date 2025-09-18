@@ -27,7 +27,7 @@ with st.sidebar:
     GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
     # Kalau kosong, izinkan user isi manual
     if not GOOGLE_API_KEY:
-        GOOGLE_API_KEY = st.text_input("Masukkan GOOGLE_API_KEY", type="password")
+        GOOGLE_API_KEY = st.text_input("Buat GOOGLE API KEY baru pada https://aistudio.google.com/apikey kemudian copy dan paste disini", type="password")
         if GOOGLE_API_KEY:
             st.session_state["GOOGLE_API_KEY"] = GOOGLE_API_KEY
     else:
