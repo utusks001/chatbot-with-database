@@ -11,11 +11,6 @@
 # langchain
 # faiss-cpu
 # torch
-#
-langchain-community
-chromadb
-openpyxl
-python-dotenv
 # streamlit
 # pandas
 # matplotlib
@@ -29,8 +24,12 @@ python-dotenv
 # langchain
 # transformers
 # sentence-transformers
-toml
 # 
+langchain-community
+chromadb
+openpyxl
+python-dotenv
+toml
 streamlit>=1.24.1
 pandas>=2.1.0
 matplotlib>=3.8.1
