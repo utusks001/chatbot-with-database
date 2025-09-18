@@ -1,5 +1,7 @@
 # app-multisheet-rag.py
 
+# app-multisheet-rag.py
+
 import streamlit as st
 import os, io
 import pandas as pd
@@ -79,6 +81,12 @@ def df_info_text(df: pd.DataFrame):
     buf = io.StringIO()
     df.info(buf=buf)
     return buf.getvalue()
+
+# ====== Helper: Deteksi kolom numerik vs kategorikal ======
+def detect_data_types(df: pd.DataFrame):
+    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    return categorical_cols, numeric_cols
 
 # ====== OCR Helper (EasyOCR) ======
 ocr_reader = easyocr.Reader(["en"], gpu=False)
@@ -227,10 +235,9 @@ if menu == "📊 Data Analysis":
         
         # Display data information
         st.write("**Data information:**")
-        # df.info()
         for index, (col, dtype) in enumerate(zip(df.columns, df.dtypes)):
-                    non_null_count = df[col].count()
-                    st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
+            non_null_count = df[col].count()
+            st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
         
         # Check missing values again
         missing_values = df.isnull().sum()
