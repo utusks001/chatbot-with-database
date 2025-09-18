@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from pathlib import Path
-import toml
 from dotenv import load_dotenv, set_key
 
 # LangChain & RAG
@@ -22,7 +21,6 @@ from langchain.chains import RetrievalQA
 from PyPDF2 import PdfReader
 import docx
 from pptx import Presentation
-import easyocr
 from PIL import Image
 import requests
 
@@ -85,17 +83,13 @@ def detect_data_types(df: pd.DataFrame):
     return categorical_cols, numeric_cols
 
 # ====== OCR Helper ======
-ocr_reader = easyocr.Reader(["en"], gpu=False)
-
 def ocr_image(file):
-    img = Image.open(file)
-    results = ocr_reader.readtext(img)
-    text = "\n".join([res[1] for res in results])
-
-    # OCR.Space sebagai fallback kalau ada API key
-    OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "")
-    if OCR_SPACE_API_KEY:
-        try:
+    text = ""
+    try:
+        img = Image.open(file)
+        # OCR.Space sebagai prioritas
+        OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "")
+        if OCR_SPACE_API_KEY:
             file.seek(0)
             resp = requests.post(
                 "https://api.ocr.space/parse/image",
@@ -104,11 +98,9 @@ def ocr_image(file):
             )
             data = resp.json()
             if data.get("ParsedResults"):
-                ocrspace_text = data["ParsedResults"][0].get("ParsedText", "")
-                text += "\n" + ocrspace_text
-        except Exception as e:
-            st.warning(f"⚠️ OCR.Space error: {e}")
-
+                text = data["ParsedResults"][0].get("ParsedText", "")
+    except Exception as e:
+        st.warning(f"⚠️ OCR gagal: {e}")
     return text
 
 # ====== Build Vectorstore ======
@@ -159,6 +151,7 @@ def build_vectorstore(files):
             except Exception:
                 pass
 
+    # Gabungkan semua dokumen multi-file
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     split_docs = splitter.split_documents(docs)
 
@@ -172,8 +165,8 @@ def build_vectorstore(files):
             google_api_key=os.getenv("GOOGLE_API_KEY", "")
         )
         return FAISS.from_documents(split_docs, embeddings)
-    except Exception as e:
-        st.warning(f"⚠️ Fallback ke HuggingFace embeddings ({e})")
+    except Exception:
+        st.warning("⚠️ Fallback ke HuggingFace embeddings")
         st.session_state["USE_HF_EMBEDDINGS"] = True
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         return FAISS.from_documents(split_docs, embeddings)
@@ -226,7 +219,7 @@ with tab1:
         st.write(f"Kolom Numerik: {numeric_cols}")
         st.write(f"Kolom Kategorikal: {categorical_cols}")
         st.text(df_info_text(df))
-        st.write(f"**Data shape:** {df.shape}")  
+        st.write(f"**Data shape:** {df.shape}")
         st.dataframe(safe_describe(df))
 
         num_df = df.select_dtypes(include="number")
@@ -258,7 +251,7 @@ with tab1:
                     try:
                         preview = df.head(1000).to_csv(index=False)
                         prompt = f"""
-                        Anda adalah asisten analisis data. 
+                        Anda adalah asisten analisis data.
                         Dataset sampel (1000 baris pertama):
 
                         {preview}
