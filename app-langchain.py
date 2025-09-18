@@ -20,7 +20,6 @@ from langchain_community.llms import HuggingFacePipeline
 from PyPDF2 import PdfReader
 import docx
 from pptx import Presentation
-from PIL import Image
 
 # ====== Load dotenv kalau lokal ======
 from dotenv import load_dotenv
@@ -111,6 +110,10 @@ st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
 st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF)")
 
 # ====== Session State ======
+if "dfs" not in st.session_state:
+    st.session_state.dfs = {}
+if "uploaded_files" not in st.session_state:
+    st.session_state.uploaded_files = []
 if "chat_history_data" not in st.session_state:
     st.session_state.chat_history_data = []
 if "chat_history_rag" not in st.session_state:
@@ -121,10 +124,13 @@ tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 # ====== MODE 1: Data Analysis ======
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
-    chat_placeholder_data = st.empty()  # container selalu ada
+    if uploaded_file:
+        st.session_state.uploaded_file = uploaded_file
 
+    # Load df
     df = None
-    if uploaded_file is not None:
+    if "uploaded_file" in st.session_state:
+        uploaded_file = st.session_state.uploaded_file
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
             st.session_state.dfs = {"CSV": df}
@@ -159,49 +165,45 @@ with tab1:
             st.write(f"**Data shape:** {df.shape}")
             st.dataframe(safe_describe(df))
 
-            num_df = df.select_dtypes(include="number")
-            if not num_df.empty:
+            if not df.select_dtypes(include="number").empty:
                 st.write("**Correlation Heatmap**")
                 fig, ax = plt.subplots(figsize=(6, 4))
-                sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
+                sns.heatmap(df.select_dtypes(include="number").corr(), annot=True, cmap="coolwarm", ax=ax)
                 st.pyplot(fig)
 
-    # ====== Chatbot Data Analysis ======
-    with chat_placeholder_data.container():
-        # Inisialisasi LLM fallback
-        llm = None
-        if os.getenv("GOOGLE_API_KEY"):
-            try:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",
-                                             google_api_key=os.getenv("GOOGLE_API_KEY"),
-                                             temperature=0.2)
-            except:
-                pass
-        if llm is None:
-            try:
-                llm = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
-            except:
-                pass
+    # ====== Chat Input Data Analysis (root tab) ======
+    llm = None
+    if os.getenv("GOOGLE_API_KEY"):
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",
+                                         google_api_key=os.getenv("GOOGLE_API_KEY"),
+                                         temperature=0.2)
+        except:
+            pass
+    if llm is None:
+        try:
+            llm = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
+        except:
+            pass
 
-        if llm:
-            user_query = st.chat_input("Tanyakan sesuatu tentang data...")
-            if user_query:
-                st.chat_message("user").markdown(user_query)
-                st.session_state.chat_history_data.append(("user", user_query))
-                with st.spinner("🔎 Menganalisis data..."):
-                    try:
-                        preview = df.head(1000).to_csv(index=False) if df is not None else ""
-                        prompt = f"Anda adalah asisten analisis data.\nDataset sampel (1000 baris pertama):\n{preview}\nPertanyaan: {user_query}"
-                        response = llm.invoke(prompt).content
-                        st.chat_message("assistant").markdown(response)
-                        st.session_state.chat_history_data.append(("assistant", response))
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
+    if llm:
+        user_query = st.chat_input("Tanyakan sesuatu tentang data...")
+        if user_query:
+            st.chat_message("user").markdown(user_query)
+            st.session_state.chat_history_data.append(("user", user_query))
+            with st.spinner("🔎 Menganalisis data..."):
+                try:
+                    preview = df.head(1000).to_csv(index=False) if df is not None else ""
+                    prompt = f"Anda adalah asisten analisis data.\nDataset sampel (1000 baris pertama):\n{preview}\nPertanyaan: {user_query}"
+                    response = llm.invoke(prompt).content
+                    st.chat_message("assistant").markdown(response)
+                    st.session_state.chat_history_data.append(("assistant", response))
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
 
-            # Riwayat chat
-            for role, msg in st.session_state.chat_history_data:
-                st.chat_message(role).markdown(msg)
+        for role, msg in st.session_state.chat_history_data:
+            st.chat_message(role).markdown(msg)
 
 # ====== MODE 2: RAG Advanced ======
 with tab2:
@@ -210,46 +212,45 @@ with tab2:
         type=["pdf", "txt", "docx", "pptx", "csv", "xls", "xlsx", "png", "jpg", "jpeg", "bmp"],
         accept_multiple_files=True
     )
-    chat_placeholder_rag = st.empty()
+    if uploaded_files:
+        st.session_state.uploaded_files = uploaded_files
 
     vectorstore = None
-    if uploaded_files:
+    if st.session_state.uploaded_files:
         st.markdown("### 📂 Dokumen yang diupload:")
-        for f in uploaded_files:
+        for f in st.session_state.uploaded_files:
             st.write("- " + f.name)
-        vectorstore = build_vectorstore(uploaded_files)
+        vectorstore = build_vectorstore(st.session_state.uploaded_files)
 
-    with chat_placeholder_rag.container():
-        # LLM RAG
-        llm_rag = None
-        try:
-            llm_rag = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
-        except:
-            pass
+    llm_rag = None
+    try:
+        llm_rag = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
+    except:
+        pass
 
-        if llm_rag and vectorstore:
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-            qa_chain = RetrievalQA.from_chain_type(llm=llm_rag, retriever=retriever, return_source_documents=True)
-            st.success("✅ Chatbot RAG siap digunakan")
+    if llm_rag and vectorstore:
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        qa_chain = RetrievalQA.from_chain_type(llm=llm_rag, retriever=retriever, return_source_documents=True)
+        st.success("✅ Chatbot RAG siap digunakan")
 
-            user_query_rag = st.chat_input("Tanyakan sesuatu tentang dokumen...")
-            if user_query_rag:
-                st.chat_message("user").markdown(user_query_rag)
-                st.session_state.chat_history_rag.append(("user", user_query_rag))
-                with st.spinner("🔎 Menganalisis dokumen..."):
-                    try:
-                        result = qa_chain({"query": user_query_rag})
-                        answer = result["result"]
-                        sources = result.get("source_documents", [])
-                        st.chat_message("assistant").markdown(answer)
-                        st.session_state.chat_history_rag.append(("assistant", answer))
-                        if sources:
-                            st.write("**Sumber:**")
-                            for s in sources:
-                                st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
+        # ====== Chat Input RAG (root tab) ======
+        user_query_rag = st.chat_input("Tanyakan sesuatu tentang dokumen...")
+        if user_query_rag:
+            st.chat_message("user").markdown(user_query_rag)
+            st.session_state.chat_history_rag.append(("user", user_query_rag))
+            with st.spinner("🔎 Menganalisis dokumen..."):
+                try:
+                    result = qa_chain({"query": user_query_rag})
+                    answer = result["result"]
+                    sources = result.get("source_documents", [])
+                    st.chat_message("assistant").markdown(answer)
+                    st.session_state.chat_history_rag.append(("assistant", answer))
+                    if sources:
+                        st.write("**Sumber:**")
+                        for s in sources:
+                            st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
 
-            # Riwayat chat
-            for role, msg in st.session_state.chat_history_rag:
-                st.chat_message(role).markdown(msg)
+        for role, msg in st.session_state.chat_history_rag:
+            st.chat_message(role).markdown(msg)
