@@ -57,13 +57,18 @@ if uploaded_file is not None:
         st.session_state.dfs = {"CSV": df}
     else:
         xls = pd.ExcelFile(uploaded_file)
-        st.session_state.dfs = {sheet: pd.read_excel(uploaded_file, sheet_name=sheet) for sheet in xls.sheet_names}
+        st.session_state.dfs = {
+            sheet: pd.read_excel(uploaded_file, sheet_name=sheet) 
+            for sheet in xls.sheet_names
+        }
 
     # ===== Sidebar multi-select =====
     with st.sidebar:
         st.subheader("Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
-        selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
+        selected_sheets = st.multiselect(
+            "Sheet Aktif", sheet_names, default=sheet_names[:1]
+        )
 
     if not selected_sheets:
         st.warning("Pilih minimal satu sheet untuk analisis.")
@@ -81,7 +86,9 @@ if uploaded_file is not None:
             df_list.append(temp)
         df = pd.concat(df_list, ignore_index=True)
         sheet_label = ", ".join(selected_sheets)
-        num_df = df.select_dtypes(include="number")
+
+    # numeric subset (supaya tidak error walau single sheet)
+    num_df = df.select_dtypes(include="number")
 
     # ===== Info file =====
     st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
@@ -124,11 +131,12 @@ if uploaded_file is not None:
     st.write("**Summary Statistics:**")
     st.write(df.describe(include="all"))
 
+    # ===== Correlation Heatmap =====
     if not num_df.empty:
-    st.write("**Correlation Heatmap**")
-    fig, ax = plt.subplots(figsize=(5, 3))
-    sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
-    st.pyplot(fig)
+        st.write("**Correlation Heatmap**")
+        fig, ax = plt.subplots(figsize=(5, 3))
+        sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
+        st.pyplot(fig)
     
     # ===== Inisialisasi Chatbot (per kombinasi sheet) =====
     agent_key = f"agent_{sheet_label}"
@@ -164,7 +172,9 @@ if uploaded_file is not None:
                 response = st.session_state[agent_key].run(user_query)
                 with st.chat_message("assistant"):
                     st.markdown(response)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": response}
+                    )
             except Exception as e:
                 st.error(f"Maaf, terjadi kesalahan saat memproses permintaan: {e}")
                 st.session_state.messages.append(
