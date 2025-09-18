@@ -70,57 +70,57 @@ if uploaded_file is not None:
     else:
         st.markdown(f"### 📄 Analisa: {uploaded_file.name}")
 
-   df = st.session_state.df
-
-   # Preview data
-   st.write("**Head (10):**")
-   st.dataframe(df.head(10))
-   st.write("**Tail (10):**")
-   st.dataframe(df.tail(10))
-
-   # Ringkasan kolom
-   categorical_cols, numeric_cols = detect_data_types(df)
-   st.write("**Ringkasan Kolom**")
-   st.write(f"Kolom Numerik: {numeric_cols}")
-   st.write(f"Kolom Kategorikal: {categorical_cols}")
-
-   st.write("**Info():**")
-   st.text(df_info_text(df))
-
-   # Display the shape of the data
-   st.write(f"**Data shape:** {df.shape}")
-   st.write("                                             ")  
-
-   # Display data information
-   st.write("**Data information:**")
-   # df.info()
-   for index, (col, dtype) in enumerate(zip(df.columns, df.dtypes)):
-            non_null_count = df[col].count()
-            st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
-
-    # Check missing values again
-    missing_values = df.isnull().sum()
-    st.write("Missing Values :")
-    st.write(missing_values)
-    st.write("                                             ")  
-
-    # Display the number of duplicates removed
-    duplicates_count = df.duplicated().sum()
-    st.write(f"Number of Duplicates : {duplicates_count}")
-    st.write("                                             ")  
-        
-    # Remove duplicates
-    duplicates_removed = df.drop_duplicates(inplace=True)
-    st.write(f"Number of Duplicates Removed: {duplicates_removed}")
-    st.write("                                             ")  
-
-    # Display Describe
-    st.write("**Describe():**")
-    st.dataframe(safe_describe(df))
-
-    # Display summary statistics of the DataFrame
-    st.write("**Summary Statistics:**")
-    st.write(df.describe(include="all"))
+       df = st.session_state.df
+    
+       # Preview data
+       st.write("**Head (10):**")
+       st.dataframe(df.head(10))
+       st.write("**Tail (10):**")
+       st.dataframe(df.tail(10))
+    
+       # Ringkasan kolom
+       categorical_cols, numeric_cols = detect_data_types(df)
+       st.write("**Ringkasan Kolom**")
+       st.write(f"Kolom Numerik: {numeric_cols}")
+       st.write(f"Kolom Kategorikal: {categorical_cols}")
+    
+       st.write("**Info():**")
+       st.text(df_info_text(df))
+    
+       # Display the shape of the data
+       st.write(f"**Data shape:** {df.shape}")
+       st.write("                                             ")  
+    
+       # Display data information
+       st.write("**Data information:**")
+       # df.info()
+       for index, (col, dtype) in enumerate(zip(df.columns, df.dtypes)):
+                non_null_count = df[col].count()
+                st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
+    
+        # Check missing values again
+        missing_values = df.isnull().sum()
+        st.write("Missing Values :")
+        st.write(missing_values)
+        st.write("                                             ")  
+    
+        # Display the number of duplicates removed
+        duplicates_count = df.duplicated().sum()
+        st.write(f"Number of Duplicates : {duplicates_count}")
+        st.write("                                             ")  
+            
+        # Remove duplicates
+        duplicates_removed = df.drop_duplicates(inplace=True)
+        st.write(f"Number of Duplicates Removed: {duplicates_removed}")
+        st.write("                                             ")  
+    
+        # Display Describe
+        st.write("**Describe():**")
+        st.dataframe(safe_describe(df))
+    
+        # Display summary statistics of the DataFrame
+        st.write("**Summary Statistics:**")
+        st.write(df.describe(include="all"))
     
   
     # Inisialisasi Chatbot
