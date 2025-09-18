@@ -1,10 +1,13 @@
 # app-langchain.py
 
 import streamlit as st
-import pandas as pd
 import io
-import matplotlib.pyplot as plt
 import os
+
+# Data analysis
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from utils1 import detect_data_types, recommend_and_plot
 
@@ -71,6 +74,7 @@ if uploaded_file is not None:
         st.markdown(f"### 📄 Analisa: {uploaded_file.name}")
 
     df = st.session_state.df
+    num_df = df.select_dtypes(include="number")
     
     # Preview data
     st.write("**Head (10):**")
@@ -121,8 +125,13 @@ if uploaded_file is not None:
     # Display summary statistics of the DataFrame
     st.write("**Summary Statistics:**")
     st.write(df.describe(include="all"))
+
+    if not num_df.empty:
+        st.write("**Correlation Heatmap**")
+        fig, ax = plt.subplots(figsize=(5, 3))
+        sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
+        st.pyplot(fig)    
     
-  
     # Inisialisasi Chatbot
     if "agent_initialized" not in st.session_state:
         try:
