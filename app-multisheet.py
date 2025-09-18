@@ -256,10 +256,10 @@ with tab1:
 
                 with st.spinner("🔎 Menganalisis data..."):
                     try:
-                        preview = df.head(500).to_csv(index=False)
+                        preview = df.head(1000).to_csv(index=False)
                         prompt = f"""
                         Anda adalah asisten analisis data. 
-                        Dataset sampel (500 baris pertama):
+                        Dataset sampel (1000 baris pertama):
 
                         {preview}
 
