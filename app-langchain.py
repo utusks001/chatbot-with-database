@@ -78,20 +78,18 @@ if uploaded_file is not None:
     st.write("**Tail (10):**")
     st.dataframe(df.tail(10))
 
-    st.write("**describe():**")
-    st.dataframe(safe_describe(df))
-
-    st.write("**info():**")
-    st.text(df_info_text(df))
-
     # Ringkasan kolom
     categorical_cols, numeric_cols = detect_data_types(df)
-    st.subheader("Ringkasan Kolom")
+    st.write("**Ringkasan Kolom**")
     st.write(f"Kolom Numerik: {numeric_cols}")
     st.write(f"Kolom Kategorikal: {categorical_cols}")
 
-    # Check missing values
+    st.write("**Info():**")
+    st.text(df_info_text(df))
+    
+    # Check and display missing values
     missing_values = df.isnull().sum()
+    st.write(f"Number of Missing Values : {missing_values}")
     st.write(missing_values)
     st.write("                                             ") 
 
@@ -104,7 +102,11 @@ if uploaded_file is not None:
     duplicates_removed = df.drop_duplicates(inplace=True)
     st.write(f"Number of Duplicates Removed: {duplicates_removed}")
     st.write("                                             ")  
-    
+
+    # Display Describe
+    st.write("**Describe():**")
+    st.dataframe(safe_describe(df))
+
     # Display summary statistics of the DataFrame
     st.write("**Summary Statistics:**")
     st.write(df.describe(include="all"))
