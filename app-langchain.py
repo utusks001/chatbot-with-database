@@ -90,6 +90,25 @@ if uploaded_file is not None:
     st.write(f"Kolom Numerik: {numeric_cols}")
     st.write(f"Kolom Kategorikal: {categorical_cols}")
 
+    # Check missing values
+    missing_values = df.isnull().sum()
+    st.write(missing_values)
+    st.write("                                             ") 
+
+    # Display the number of duplicates removed
+    duplicates_count = df.duplicated().sum()
+    st.write(f"Number of Duplicates : {duplicates_count}")
+    st.write("                                             ")  
+        
+    # Remove duplicates
+    duplicates-removed = df.drop_duplicates(inplace=True)
+    st.write(f"Number of Duplicates Removed: {duplicates-removed}")
+    st.write("                                             ")  
+    
+    # Display summary statistics of the DataFrame
+    st.write("**Summary Statistics:**")
+    st.write(df.describe(include="all"))
+    
     # Inisialisasi Chatbot
     if "agent_initialized" not in st.session_state:
         try:
