@@ -277,10 +277,10 @@ if menu == "📊 Data Analysis":
 
                 with st.spinner("🔎 Menganalisis data..."):
                     try:
-                        preview = df.head(50).to_csv(index=False)
+                        preview = df.head(100).to_csv(index=False)
                         prompt = f"""
                         Anda adalah asisten analisis data. 
-                        Dataset sampel (50 baris pertama):
+                        Dataset sampel (100 baris pertama):
 
                         {preview}
 
