@@ -6,29 +6,65 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from dotenv import load_dotenv
-
-# LangChain & RAG
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+import toml
+from dotenv import load_dotenv, set_key
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
-
-# File loaders
-from PyPDF2 import PdfReader
-import docx
-from pptx import Presentation
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from PIL import Image
 import requests
 
-# Load .env
+# ====== Load .env ======
 dotenv_path = Path(".env")
 if dotenv_path.exists():
     load_dotenv(dotenv_path)
 
+# ====== Sidebar API Key ======
+with st.sidebar:
+    st.header("🔑 Konfigurasi API Key")
+    GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+
+    # Input manual jika kosong
+    if not GOOGLE_API_KEY:
+        GOOGLE_API_KEY = st.text_input(
+            "Buat GOOGLE API KEY baru pada https://aistudio.google.com/apikey kemudian copy dan paste disini",
+            type="password"
+        )
+        if GOOGLE_API_KEY:
+            st.session_state["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+            st.success("GOOGLE_API_KEY berhasil dimasukkan ✅")
+            save_choice = st.radio("Simpan key ke mana?", ["Jangan simpan", ".env", "secrets.toml"])
+            if st.button("💾 Simpan API Key"):
+                if save_choice == ".env":
+                    set_key(dotenv_path, "GOOGLE_API_KEY", GOOGLE_API_KEY)
+                    st.success("✅ API Key disimpan ke .env")
+                elif save_choice == "secrets.toml":
+                    secrets_path = Path(".streamlit/secrets.toml")
+                    secrets_path.parent.mkdir(exist_ok=True)
+                    secrets = {}
+                    if secrets_path.exists():
+                        secrets = toml.load(secrets_path)
+                    secrets["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+                    with open(secrets_path, "w") as f:
+                        toml.dump(secrets, f)
+                    st.success("✅ API Key disimpan ke .streamlit/secrets.toml")
+    else:
+        st.success("GOOGLE_API_KEY berhasil dimuat ✅")
+
+# ====== Embeddings toggle ======
+st.subheader("⚙️ Embeddings Settings")
+use_hf_embeddings = st.checkbox("Pakai HuggingFace embeddings saja", value=True)
+st.session_state["USE_HF_EMBEDDINGS"] = use_hf_embeddings
+
 # ====== Helper Functions ======
+def detect_data_types(df: pd.DataFrame):
+    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    return categorical_cols, numeric_cols
+
 def safe_describe(df: pd.DataFrame):
     try:
         return df.describe(include="all").transpose()
@@ -40,15 +76,10 @@ def df_info_text(df: pd.DataFrame):
     df.info(buf=buf)
     return buf.getvalue()
 
-def detect_data_types(df: pd.DataFrame):
-    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    return categorical_cols, numeric_cols
-
-# ====== OCR.Space Only ======
+# ====== OCR Helper ======
 def ocr_image(file):
-    OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "")
     text = ""
+    OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "")
     if OCR_SPACE_API_KEY:
         try:
             file.seek(0)
@@ -58,12 +89,10 @@ def ocr_image(file):
                 data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
             )
             data = resp.json()
-            if "ParsedResults" in data and data["ParsedResults"]:
+            if data.get("ParsedResults"):
                 text = data["ParsedResults"][0].get("ParsedText", "")
         except Exception as e:
             st.warning(f"⚠️ OCR.Space error: {e}")
-    else:
-        st.warning("⚠️ OCR.Space API key belum diatur di .env. OCR gambar tidak dapat dijalankan.")
     return text
 
 # ====== Build Vectorstore ======
@@ -71,55 +100,73 @@ def build_vectorstore(files):
     docs = []
     for file in files:
         name = file.name
-        try:
-            if name.endswith(".txt"):
-                text = file.read().decode("utf-8")
-            elif name.endswith(".pdf"):
-                reader = PdfReader(file)
-                text = "\n".join([page.extract_text() or "" for page in reader.pages])
-            elif name.endswith(".csv"):
-                df = pd.read_csv(file)
-                text = df.to_csv(index=False)
-            elif name.endswith((".xlsx", ".xls")):
-                xls = pd.ExcelFile(file)
-                text = ""
-                for sheet in xls.sheet_names:
-                    df = pd.read_excel(file, sheet_name=sheet)
-                    text += f"[{sheet}]\n" + df.to_csv(index=False) + "\n"
-            elif name.endswith(".docx"):
-                doc = docx.Document(file)
-                text = "\n".join([para.text for para in doc.paragraphs])
-            elif name.endswith(".pptx"):
-                prs = Presentation(file)
-                text = "\n".join([shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text")])
-            elif name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
-                text = ocr_image(file)
-            else:
-                text = file.read().decode("utf-8", errors="ignore")
+        if name.endswith(".txt"):
+            text = file.read().decode("utf-8")
             docs.append(Document(page_content=text, metadata={"source": name}))
-        except Exception:
-            continue
+        elif name.endswith(".pdf"):
+            from PyPDF2 import PdfReader
+            reader = PdfReader(file)
+            text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            docs.append(Document(page_content=text, metadata={"source": name}))
+        elif name.endswith(".csv"):
+            df = pd.read_csv(file)
+            text = df.to_csv(index=False)
+            docs.append(Document(page_content=text, metadata={"source": name}))
+        elif name.endswith(".xlsx") or name.endswith(".xls"):
+            xls = pd.ExcelFile(file)
+            for sheet in xls.sheet_names:
+                df = pd.read_excel(file, sheet_name=sheet)
+                text = f"[{sheet}]\n" + df.to_csv(index=False)
+                docs.append(Document(page_content=text, metadata={"source": f"{name}:{sheet}"}))
+        elif name.endswith(".docx"):
+            import docx
+            doc = docx.Document(file)
+            text = "\n".join([para.text for para in doc.paragraphs])
+            docs.append(Document(page_content=text, metadata={"source": name}))
+        elif name.endswith(".pptx"):
+            from pptx import Presentation
+            prs = Presentation(file)
+            text = "\n".join([shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text")])
+            docs.append(Document(page_content=text, metadata={"source": name}))
+        elif name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+            text = ocr_image(file)
+            docs.append(Document(page_content=text, metadata={"source": name}))
+        else:
+            try:
+                text = file.read().decode("utf-8", errors="ignore")
+                docs.append(Document(page_content=text, metadata={"source": name}))
+            except:
+                pass
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     split_docs = splitter.split_documents(docs)
 
-    # Gunakan HuggingFace embeddings ultra-lite
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return FAISS.from_documents(split_docs, embeddings)
+    # ====== Embeddings selection ======
+    if st.session_state.get("USE_HF_EMBEDDINGS", False):
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        return FAISS.from_documents(split_docs, embeddings)
 
-# ====== Streamlit Config ======
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=os.getenv("GOOGLE_API_KEY", "")
+        )
+        return FAISS.from_documents(split_docs, embeddings)
+    except Exception:
+        st.warning("⚠️ Quota habis / API Key error, fallback ke HuggingFace embeddings")
+        st.session_state["USE_HF_EMBEDDINGS"] = True
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        return FAISS.from_documents(split_docs, embeddings)
+
+# ====== Main App ======
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
-st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF)")
+st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF fallback)")
 
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
-# ====== MODE 1: Data Analysis ======
+# ========== MODE 1: Data Analysis ==========
 with tab1:
-    uploaded_file = st.file_uploader(
-        "Upload file Excel/CSV untuk analisa data",
-        type=["csv", "xls", "xlsx"]
-    )
-
+    uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     if uploaded_file is not None:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
@@ -131,6 +178,7 @@ with tab1:
         st.subheader("📑 Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
         selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
+
         if not selected_sheets:
             st.warning("Pilih minimal satu sheet untuk analisis.")
             st.stop()
@@ -164,36 +212,37 @@ with tab1:
             sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
             st.pyplot(fig)
 
-        # ====== Chatbot Data Analysis ======
         if os.getenv("GOOGLE_API_KEY"):
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                google_api_key=os.getenv("GOOGLE_API_KEY"),
-                temperature=0.2
-            )
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=os.getenv("GOOGLE_API_KEY"), temperature=0.2)
         else:
             llm = None
 
-        user_query = st.chat_input("Tanyakan sesuatu tentang data...")
-        if user_query:
-            st.chat_message("user").markdown(user_query)
-            if llm:
+        if llm:
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+
+            user_query = st.chat_input("Tanyakan sesuatu tentang data...")
+            if user_query:
+                st.chat_message("user").markdown(user_query)
+                st.session_state.chat_history.append(("user", user_query))
                 with st.spinner("🔎 Menganalisis data..."):
                     try:
                         preview = df.head(1000).to_csv(index=False)
                         prompt = f"Anda adalah asisten analisis data.\nDataset sampel (1000 baris pertama):\n{preview}\nPertanyaan: {user_query}"
                         response = llm.invoke(prompt).content
                         st.chat_message("assistant").markdown(response)
+                        st.session_state.chat_history.append(("assistant", response))
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
-            else:
-                st.chat_message("assistant").markdown("⚠️ LLM belum tersedia. Masukkan GOOGLE_API_KEY di .env atau Secrets untuk bisa chat.")
 
-# ====== MODE 2: RAG Advanced ======
+            for role, msg in st.session_state.chat_history:
+                st.chat_message(role).markdown(msg)
+
+# ========== MODE 2: RAG Advanced ==========
 with tab2:
     uploaded_files = st.file_uploader(
         "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar dengan teks) → bisa multi-file",
-        type=["pdf", "txt", "docx", "pptx", "csv", "xls", "xlsx", "png", "jpg", "jpeg", "bmp"],
+        type=["pdf","txt","docx","pptx","csv","xls","xlsx","png","jpg","jpeg","bmp"],
         accept_multiple_files=True
     )
 
@@ -203,15 +252,12 @@ with tab2:
             st.write("- " + f.name)
 
         vectorstore = build_vectorstore(uploaded_files)
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        retriever = vectorstore.as_retriever(search_kwargs={"k":3})
 
-        if os.getenv("GOOGLE_API_KEY"):
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                google_api_key=os.getenv("GOOGLE_API_KEY")
-            )
+        if os.getenv("GOOGLE_API_KEY") and not st.session_state.get("USE_HF_EMBEDDINGS", False):
+            llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=os.getenv("GOOGLE_API_KEY"))
         else:
-            llm = None
+            llm = None  # fallback → hanya retrieval tanpa LLM Gemini
 
         if llm:
             qa_chain = RetrievalQA.from_chain_type(
@@ -219,13 +265,14 @@ with tab2:
                 retriever=retriever,
                 return_source_documents=True
             )
-            st.success("✅ Chatbot RAG siap digunakan")
 
-            user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
-            if user_query:
-                st.chat_message("user").markdown(user_query)
-                with st.spinner("🔎 Menganalisis dokumen..."):
-                    try:
+        st.success("✅ Chatbot RAG siap digunakan")
+        user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
+        if user_query:
+            st.chat_message("user").markdown(user_query)
+            with st.spinner("🔎 Menganalisis dokumen..."):
+                try:
+                    if llm:
                         result = qa_chain({"query": user_query})
                         answer = result["result"]
                         sources = result.get("source_documents", [])
@@ -234,7 +281,7 @@ with tab2:
                             st.write("**Sumber:**")
                             for s in sources:
                                 st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
-        else:
-            st.info("⚠️ LLM belum tersedia. Masukkan GOOGLE_API_KEY di .env atau Secrets untuk bisa chat.")
+                    else:
+                        st.chat_message("assistant").markdown("✅ Embeddings sudah siap, tapi Google Gemini API tidak tersedia. Gunakan preview/HuggingFace untuk retrieval.")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
