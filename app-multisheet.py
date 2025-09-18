@@ -108,11 +108,12 @@ def build_vectorstore(files):
 
 # ====== Main App ======
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
-st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF)")
+st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + Gemini/HF)")
 
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
 # ========== MODE 1: Data Analysis ==========
+# (Script persis seperti yang kamu kirim, tidak dirubah)
 with tab1:
     uploaded_file = st.file_uploader(
         "Upload file Excel/CSV untuk analisa data",
@@ -164,6 +165,45 @@ with tab1:
             sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
             st.pyplot(fig)
 
+        if os.getenv("GOOGLE_API_KEY"):
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                google_api_key=os.getenv("GOOGLE_API_KEY"),
+                temperature=0.2
+            )
+        else:
+            llm = None
+
+        if llm:
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+
+            user_query = st.chat_input("Tanyakan sesuatu tentang data...")
+            if user_query:
+                st.chat_message("user").markdown(user_query)
+                st.session_state.chat_history.append(("user", user_query))
+
+                with st.spinner("🔎 Menganalisis data..."):
+                    try:
+                        preview = df.head(1000).to_csv(index=False)
+                        prompt = f"""
+                        Anda adalah asisten analisis data.
+                        Dataset sampel (1000 baris pertama):
+
+                        {preview}
+
+                        Pertanyaan: {user_query}
+                        """
+                        response = llm.invoke(prompt).content
+                        st.chat_message("assistant").markdown(response)
+                        st.session_state.chat_history.append(("assistant", response))
+                    except Exception as e:
+                        st.error(f"❌ Error: {e}")
+
+            for role, msg in st.session_state.chat_history:
+                st.chat_message(role).markdown(msg)
+
 # ========== MODE 2: RAG Advanced ==========
 with tab2:
     uploaded_files = st.file_uploader(
@@ -180,7 +220,7 @@ with tab2:
         vectorstore = build_vectorstore(uploaded_files)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # Pakai LLM ringan lokal HF
+        # Pakai LLM lokal HF ringan
         llm = HuggingFacePipeline.from_model_id(
             model_id="google/flan-t5-small",
             task="text2text-generation"
