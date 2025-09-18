@@ -17,8 +17,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
-from langchain_experimental.tools.python.tool import PythonREPLTool
-from langchain.agents import initialize_agent, Tool, AgentType
 
 # File loaders
 from PyPDF2 import PdfReader
@@ -117,7 +115,7 @@ def build_vectorstore(files):
             text = df.to_csv(index=False)
             docs.append(Document(page_content=text, metadata={"source": name}))
 
-        elif name.endswith(".xlsx") or name.endswith(".xls"):
+        elif name.endswith((".xlsx", ".xls")):
             xls = pd.ExcelFile(file)
             for sheet in xls.sheet_names:
                 df = pd.read_excel(file, sheet_name=sheet)
@@ -227,41 +225,29 @@ if menu == "📊 Data Analysis":
         st.write("**Info():**")
         st.text(df_info_text(df))
         
-        # Display the shape of the data
         st.write(f"**Data shape:** {df.shape}")
-        st.write("                                             ")  
         
-        # Display data information
         st.write("**Data information:**")
         for index, (col, dtype) in enumerate(zip(df.columns, df.dtypes)):
             non_null_count = df[col].count()
             st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
         
-        # Check missing values again
         missing_values = df.isnull().sum()
         st.write("Missing Values :")
         st.write(missing_values)
-        st.write("                                             ")  
         
-        # Display the number of duplicates removed
         duplicates_count = df.duplicated().sum()
         st.write(f"Number of Duplicates : {duplicates_count}")
-        st.write("                                             ")  
                 
-        # Remove duplicates
         duplicates_removed = df.drop_duplicates(inplace=True)
         st.write(f"Number of Duplicates Removed: {duplicates_removed}")
-        st.write("                                             ")  
         
-        # Display Describe
         st.write("**Describe():**")
         st.dataframe(safe_describe(df))
         
-        # Display summary statistics of the DataFrame
         st.write("**Summary Statistics:**")
         st.write(df.describe(include="all"))
 
-        # Correlation heatmap
         num_df = df.select_dtypes(include="number")
         if not num_df.empty:
             st.write("**Correlation Heatmap**")
@@ -273,35 +259,45 @@ if menu == "📊 Data Analysis":
         if os.getenv("GOOGLE_API_KEY"):
             llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
-                google_api_key=os.getenv("GOOGLE_API_KEY")
+                google_api_key=os.getenv("GOOGLE_API_KEY"),
+                temperature=0.2
             )
         else:
             st.warning("⚠️ Tidak ada API Key, chatbot nonaktif.")
             llm = None
 
         if llm:
-            tools = [PythonREPLTool()]
-            agent = initialize_agent(
-                tools=tools,
-                llm=llm,
-                agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-                verbose=True
-            )
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
 
             user_query = st.chat_input("Tanyakan sesuatu tentang data (statistik, tren, dsb.)")
             if user_query:
-                with st.chat_message("user"):
-                    st.markdown(user_query)
+                st.chat_message("user").markdown(user_query)
+                st.session_state.chat_history.append(("user", user_query))
+
                 with st.spinner("🔎 Menganalisis data..."):
                     try:
-                        # Kirim pertanyaan ke LLM dengan konteks data (CSV string ringkas)
                         preview = df.head(50).to_csv(index=False)
-                        prompt = f"Gunakan Python untuk analisa data berikut:\n{preview}\n\nPertanyaan: {user_query}"
-                        response = agent.run(prompt)
-                        with st.chat_message("assistant"):
-                            st.markdown(response)
+                        prompt = f"""
+                        Anda adalah asisten analisis data. 
+                        Dataset sampel (50 baris pertama):
+
+                        {preview}
+
+                        Pertanyaan: {user_query}
+                        Berikan jawaban analisis statistik atau Python jika perlu.
+                        """
+
+                        response = llm.invoke(prompt).content
+                        st.chat_message("assistant").markdown(response)
+                        st.session_state.chat_history.append(("assistant", response))
+
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
+
+            # tampilkan history lama
+            for role, msg in st.session_state.chat_history:
+                st.chat_message(role).markdown(msg)
 
 # ========== MODE 2: RAG Advanced ==========
 if menu == "📑 RAG Advanced":
@@ -337,8 +333,7 @@ if menu == "📑 RAG Advanced":
 
         user_query = st.chat_input("Tanyakan sesuatu tentang dokumen hukum/medis...")
         if user_query:
-            with st.chat_message("user"):
-                st.markdown(user_query)
+            st.chat_message("user").markdown(user_query)
 
             with st.spinner("🔎 Menganalisis dokumen..."):
                 try:
@@ -346,11 +341,10 @@ if menu == "📑 RAG Advanced":
                     answer = result["result"]
                     sources = result.get("source_documents", [])
 
-                    with st.chat_message("assistant"):
-                        st.markdown(answer)
-                        if sources:
-                            st.write("**Sumber:**")
-                            for s in sources:
-                                st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
+                    st.chat_message("assistant").markdown(answer)
+                    if sources:
+                        st.write("**Sumber:**")
+                        for s in sources:
+                            st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
