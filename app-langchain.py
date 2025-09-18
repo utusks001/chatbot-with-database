@@ -15,6 +15,8 @@ from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
+from langchain.chains.question_answering import load_qa_chain
+from langchain.llms import HuggingFacePipeline
 
 # File loaders
 from PyPDF2 import PdfReader
@@ -22,6 +24,7 @@ import docx
 from pptx import Presentation
 from PIL import Image
 import requests
+from transformers import pipeline
 
 # ====== Load dotenv ======
 dotenv_path = Path(".env")
@@ -30,13 +33,11 @@ if dotenv_path.exists():
 
 # ====== Sidebar: Google API Key ======
 with st.sidebar:
-    st.header("🔑 Konfigurasi API Key")
-
+    st.header("🔑 Konfigurasi API Key (Opsional)")
     GOOGLE_API_KEY = st.session_state.get("GOOGLE_API_KEY") or \
                      st.secrets.get("GOOGLE_API_KEY","") or \
                      os.getenv("GOOGLE_API_KEY","")
 
-    # Kalau kosong, tampilkan input manual
     if not GOOGLE_API_KEY:
         GOOGLE_API_KEY = st.text_input(
             "Buat GOOGLE API KEY baru pada https://aistudio.google.com/apikey kemudian copy dan paste disini",
@@ -146,7 +147,6 @@ def build_vectorstore(files):
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     split_docs = splitter.split_documents(docs)
 
-    # Fallback ke HuggingFace embeddings selalu
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vectorstore = FAISS.from_documents(split_docs, embeddings)
     return vectorstore
@@ -221,11 +221,10 @@ with tab2:
         vectorstore = build_vectorstore(uploaded_files)
         retriever = vectorstore.as_retriever(search_kwargs={"k":3})
 
-        # RAG Chatbot dengan HuggingFace fallback
-        from langchain.chat_models import ChatOpenAI
-        llm = ChatOpenAI(temperature=0, model_name="gpt-3.5-turbo")  # lightweight, fallback
+        # Gunakan HuggingFace pipeline sebagai LLM fallback
+        hf_pipeline = pipeline("text2text-generation", model="google/flan-t5-small", tokenizer="google/flan-t5-small")
+        llm = HuggingFacePipeline(pipeline=hf_pipeline)
 
-        from langchain.chains import RetrievalQA
         qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever, return_source_documents=True)
         st.success("✅ Chatbot RAG siap digunakan")
 
