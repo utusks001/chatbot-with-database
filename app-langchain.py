@@ -108,11 +108,11 @@ def build_vectorstore(files):
 
 # ====== Main App ======
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
-st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF fallback)")
+st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HuggingFace)")
 
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
-# ================== Tab 1: Data Analysis ==================
+# ===== MODE 1: Data Analysis =====
 with tab1:
     uploaded_file = st.file_uploader(
         "Upload file Excel/CSV untuk analisa data",
@@ -122,79 +122,33 @@ with tab1:
     if uploaded_file is not None:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
-            st.session_state.dfs = {"CSV": df}
+            st.session_state.current_df = df
         else:
             xls = pd.ExcelFile(uploaded_file)
-            st.session_state.dfs = {sheet: pd.read_excel(uploaded_file, sheet_name=sheet) for sheet in xls.sheet_names}
+            st.session_state.current_df = pd.concat(
+                [pd.read_excel(uploaded_file, sheet_name=sheet) for sheet in xls.sheet_names],
+                ignore_index=True
+            )
 
-        st.subheader("📑 Pilih Sheet")
-        sheet_names = list(st.session_state.dfs.keys())
-        selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
-        if not selected_sheets:
-            st.warning("Pilih minimal satu sheet untuk analisis.")
-            st.stop()
-
-        if len(selected_sheets) == 1:
-            df = st.session_state.dfs[selected_sheets[0]]
-            sheet_label = selected_sheets[0]
-        else:
-            df_list = []
-            for s in selected_sheets:
-                temp = st.session_state.dfs[s].copy()
-                temp["SheetName"] = s
-                df_list.append(temp)
-            df = pd.concat(df_list, ignore_index=True)
-            sheet_label = ", ".join(selected_sheets)
-
-        st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
-        st.dataframe(df.head(10))
-        categorical_cols, numeric_cols = detect_data_types(df)
+        st.dataframe(st.session_state.current_df.head(10))
+        categorical_cols, numeric_cols = detect_data_types(st.session_state.current_df)
         st.write(f"Kolom Numerik: {numeric_cols}")
         st.write(f"Kolom Kategorikal: {categorical_cols}")
-        st.text(df_info_text(df))
-        st.write(f"**Data shape:** {df.shape}")
-        st.dataframe(safe_describe(df))
+        st.text(df_info_text(st.session_state.current_df))
+        st.write(f"**Data shape:** {st.session_state.current_df.shape}")
+        st.dataframe(safe_describe(st.session_state.current_df))
 
-        num_df = df.select_dtypes(include="number")
+        num_df = st.session_state.current_df.select_dtypes(include="number")
         if not num_df.empty:
             st.write("**Correlation Heatmap**")
             fig, ax = plt.subplots(figsize=(6, 4))
             sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
             st.pyplot(fig)
 
-    # ====== Chatbot Data Analysis (HF fallback) ======
-    st.subheader("💬 Chat Data Analysis (Insight utama + kesimpulan otomatis)")
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    # Buat container untuk chat
-    chat_container = st.container()
-
-    with chat_container:
-        if uploaded_file is not None:
-            user_query = st.chat_input("Tanyakan sesuatu tentang data...")
-            if user_query:
-                st.chat_message("user").markdown(user_query)
-                # Panggil LLM HF fallback
-                llm = HuggingFacePipeline.from_model_id(
-                    model_id="google/flan-t5-small",
-                    task="text2text-generation"
-                )
-                preview = df.head(1000).to_csv(index=False)
-                prompt = f"Analisa data berikut dan buat insight utama + kesimpulan:\n{preview}\nPertanyaan: {user_query}"
-                response = llm(prompt)
-                st.chat_message("assistant").markdown(response)
-                st.session_state.chat_history.append(("user", user_query))
-                st.session_state.chat_history.append(("assistant", response))
-
-    # Render history
-    for role, msg in st.session_state.chat_history:
-        st.chat_message(role).markdown(msg)
-
-# ================== Tab 2: RAG Advanced ==================
+# ===== MODE 2: RAG Advanced =====
 with tab2:
     uploaded_files = st.file_uploader(
-        "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar dengan teks) → bisa multi-file",
+        "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar) → bisa multi-file",
         type=["pdf", "txt", "docx", "pptx", "csv", "xls", "xlsx", "png", "jpg", "jpeg", "bmp"],
         accept_multiple_files=True
     )
@@ -207,7 +161,7 @@ with tab2:
         vectorstore = build_vectorstore(uploaded_files)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # LLM HF fallback
+        # LLM HuggingFace fallback
         llm = HuggingFacePipeline.from_model_id(
             model_id="google/flan-t5-small",
             task="text2text-generation"
@@ -220,18 +174,37 @@ with tab2:
         )
         st.success("✅ Chatbot RAG siap digunakan")
 
-        user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
-        if user_query:
-            st.chat_message("user").markdown(user_query)
-            with st.spinner("🔎 Menganalisis dokumen..."):
-                try:
-                    result = qa_chain({"query": user_query})
-                    answer = result["result"]
-                    sources = result.get("source_documents", [])
-                    st.chat_message("assistant").markdown(answer)
-                    if sources:
-                        st.write("**Sumber:**")
-                        for s in sources:
-                            st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
-                except Exception as e:
-                    st.error(f"❌ Error: {e}")
+# ====== Chatbot untuk Data Analysis & RAG =====
+st.subheader("💬 Chat (Data Analysis + RAG)")
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+user_query = st.chat_input("Tanyakan sesuatu tentang data atau dokumen...")
+
+if user_query:
+    st.chat_message("user").markdown(user_query)
+
+    response_text = ""
+
+    # Data Analysis fallback
+    if "current_df" in st.session_state and st.session_state.current_df is not None:
+        preview = st.session_state.current_df.head(1000).to_csv(index=False)
+        prompt = f"Analisa data berikut dan buat insight utama + kesimpulan:\n{preview}\nPertanyaan: {user_query}"
+        llm = HuggingFacePipeline.from_model_id(
+            model_id="google/flan-t5-small",
+            task="text2text-generation"
+        )
+        response_text = llm(prompt)
+
+    # RAG fallback
+    elif uploaded_files:
+        result = qa_chain({"query": user_query})
+        response_text = result["result"]
+
+    st.chat_message("assistant").markdown(response_text)
+    st.session_state.chat_history.append(("user", user_query))
+    st.session_state.chat_history.append(("assistant", response_text))
+
+# Render chat history
+for role, msg in st.session_state.chat_history:
+    st.chat_message(role).markdown(msg)
