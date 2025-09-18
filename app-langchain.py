@@ -7,11 +7,10 @@ from dotenv import load_dotenv, set_key
 import toml
 import matplotlib.pyplot as plt
 import seaborn as sns
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
+from sentence_transformers import SentenceTransformer
+import faiss
 from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.chains import RetrievalQA
 
 # ====== Load .env ======
 dotenv_path = Path(".env")
@@ -20,7 +19,6 @@ if dotenv_path.exists():
 
 # ====== Sidebar: API Key ======
 st.sidebar.header("🔑 Konfigurasi API Key")
-
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
 if not GOOGLE_API_KEY:
     GOOGLE_API_KEY = st.text_input(
@@ -85,7 +83,7 @@ def ocr_image(file):
         st.warning(f"⚠️ OCR.Space error: {e}")
     return ""
 
-# ====== Build Vectorstore ======
+# ====== Build Vectorstore using sentence-transformers + FAISS ======
 def build_vectorstore(files):
     docs = []
     for file in files:
@@ -95,8 +93,7 @@ def build_vectorstore(files):
             if name.lower().endswith(".txt"):
                 text = file.read().decode("utf-8")
             elif name.lower().endswith((".pdf", ".csv", ".xlsx", ".xls", ".docx", ".pptx")):
-                # Simple text fallback
-                text = f"[{name}] text content placeholder"
+                text = f"[{name}] content placeholder"
             elif name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
                 text = ocr_image(file)
             else:
@@ -105,11 +102,24 @@ def build_vectorstore(files):
             text = ""
         if text.strip():
             docs.append(Document(page_content=text, metadata={"source": name}))
+
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     split_docs = splitter.split_documents(docs)
-    # Fallback HuggingFace embeddings
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return FAISS.from_documents(split_docs, embeddings)
+
+    # HuggingFace embeddings
+    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = [model.encode(doc.page_content) for doc in split_docs]
+
+    # Build FAISS index
+    dim = len(embeddings[0]) if embeddings else 384
+    index = faiss.IndexFlatL2(dim)
+    if embeddings:
+        import numpy as np
+        index.add(np.array(embeddings).astype("float32"))
+
+    # Attach documents
+    vectorstore = {"index": index, "docs": split_docs}
+    return vectorstore
 
 # ====== Main App ======
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
@@ -117,7 +127,7 @@ st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HuggingFace Fallback)"
 
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
-# ========== Tab 1: Data Analysis ==========
+# ----- Tab 1: Data Analysis -----
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     if uploaded_file:
@@ -137,7 +147,6 @@ with tab1:
 
         if len(selected_sheets) == 1:
             df = st.session_state.dfs[selected_sheets[0]]
-            sheet_label = selected_sheets[0]
         else:
             df_list = []
             for s in selected_sheets:
@@ -145,9 +154,8 @@ with tab1:
                 temp["SheetName"] = s
                 df_list.append(temp)
             df = pd.concat(df_list, ignore_index=True)
-            sheet_label = ", ".join(selected_sheets)
 
-        st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
+        st.markdown(f"### 📄 Analisa: {uploaded_file.name}")
         st.dataframe(df.head(10))
         categorical_cols, numeric_cols = detect_data_types(df)
         st.write(f"Kolom Numerik: {numeric_cols}")
@@ -163,7 +171,6 @@ with tab1:
             sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
             st.pyplot(fig)
 
-        # Chatbot Analisis Data (HuggingFace dummy)
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
 
@@ -171,14 +178,14 @@ with tab1:
         if user_query:
             st.chat_message("user").markdown(user_query)
             st.session_state.chat_history.append(("user", user_query))
-            response = f"🤖 (HuggingFace fallback) Jawaban untuk: {user_query[:50]}..."  # placeholder
+            response = f"🤖 (HuggingFace fallback) Jawaban untuk: {user_query[:50]}..."
             st.chat_message("assistant").markdown(response)
             st.session_state.chat_history.append(("assistant", response))
 
         for role, msg in st.session_state.chat_history:
             st.chat_message(role).markdown(msg)
 
-# ========== Tab 2: RAG Advanced ==========
+# ----- Tab 2: RAG Advanced -----
 with tab2:
     uploaded_files = st.file_uploader(
         "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar) → multi-file",
@@ -191,9 +198,7 @@ with tab2:
             st.write("- " + f.name)
 
         vectorstore = build_vectorstore(uploaded_files)
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # Dummy RAG chatbot (HuggingFace fallback)
         if "rag_history" not in st.session_state:
             st.session_state.rag_history = []
 
