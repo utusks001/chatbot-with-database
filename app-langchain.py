@@ -108,11 +108,11 @@ def build_vectorstore(files):
 
 # ====== Main App ======
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
-st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HuggingFace)")
+st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF fallback)")
 
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
-# ====== Data Analysis Chatbot ======
+# ================== Tab 1: Data Analysis ==================
 with tab1:
     uploaded_file = st.file_uploader(
         "Upload file Excel/CSV untuk analisa data",
@@ -130,7 +130,6 @@ with tab1:
         st.subheader("📑 Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
         selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
-
         if not selected_sheets:
             st.warning("Pilih minimal satu sheet untuk analisis.")
             st.stop()
@@ -149,7 +148,6 @@ with tab1:
 
         st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
         st.dataframe(df.head(10))
-
         categorical_cols, numeric_cols = detect_data_types(df)
         st.write(f"Kolom Numerik: {numeric_cols}")
         st.write(f"Kolom Kategorikal: {categorical_cols}")
@@ -164,41 +162,36 @@ with tab1:
             sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
             st.pyplot(fig)
 
-        # LLM fallback HuggingFace untuk insight
-        llm = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
+    # ====== Chatbot Data Analysis (HF fallback) ======
+    st.subheader("💬 Chat Data Analysis (Insight utama + kesimpulan otomatis)")
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
+    # Buat container untuk chat
+    chat_container = st.container()
 
-        user_query = st.chat_input("Tanyakan sesuatu tentang data (insight utama + kesimpulan otomatis)...")
-        if user_query:
-            st.chat_message("user").markdown(user_query)
-            st.session_state.chat_history.append(("user", user_query))
-            with st.spinner("🔎 Menganalisis data..."):
-                try:
-                    preview = df.head(1000).to_csv(index=False)
-                    prompt = f"""
-                    Anda adalah asisten analisis data.
-                    Dataset sampel (1000 baris pertama):
+    with chat_container:
+        if uploaded_file is not None:
+            user_query = st.chat_input("Tanyakan sesuatu tentang data...")
+            if user_query:
+                st.chat_message("user").markdown(user_query)
+                # Panggil LLM HF fallback
+                llm = HuggingFacePipeline.from_model_id(
+                    model_id="google/flan-t5-small",
+                    task="text2text-generation"
+                )
+                preview = df.head(1000).to_csv(index=False)
+                prompt = f"Analisa data berikut dan buat insight utama + kesimpulan:\n{preview}\nPertanyaan: {user_query}"
+                response = llm(prompt)
+                st.chat_message("assistant").markdown(response)
+                st.session_state.chat_history.append(("user", user_query))
+                st.session_state.chat_history.append(("assistant", response))
 
-                    {preview}
+    # Render history
+    for role, msg in st.session_state.chat_history:
+        st.chat_message(role).markdown(msg)
 
-                    Pertanyaan: {user_query}
-                    """
-                    response = llm(prompt)
-                    if hasattr(response, "content"):
-                        answer = response.content
-                    else:
-                        answer = str(response)
-                    st.chat_message("assistant").markdown(answer)
-                    st.session_state.chat_history.append(("assistant", answer))
-                except Exception as e:
-                    st.error(f"❌ Error: {e}")
-
-        for role, msg in st.session_state.chat_history:
-            st.chat_message(role).markdown(msg)
-
-# ====== RAG Advanced Chatbot ======
+# ================== Tab 2: RAG Advanced ==================
 with tab2:
     uploaded_files = st.file_uploader(
         "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar dengan teks) → bisa multi-file",
@@ -214,7 +207,7 @@ with tab2:
         vectorstore = build_vectorstore(uploaded_files)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # LLM lokal HF ringan
+        # LLM HF fallback
         llm = HuggingFacePipeline.from_model_id(
             model_id="google/flan-t5-small",
             task="text2text-generation"
