@@ -31,9 +31,11 @@ transformers
 sentence-transformers
 toml
 # LangChain & Google Gemini
-langchain-google-genai>=0.1.12
-google-ai-generativelanguage>=1.0.0
+langchain-google-genai
+google-ai-generativelanguage
 # 
+# langchain-google-genai>=0.1.12
+# google-ai-generativelanguage>=1.0.0
 # streamlit>=1.24.1
 # pandas>=2.0
 # matplotlib>=3.8
