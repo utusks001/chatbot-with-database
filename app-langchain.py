@@ -111,15 +111,19 @@ st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
 st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF)")
 
 # ====== Session State ======
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if "chat_history_data" not in st.session_state:
+    st.session_state.chat_history_data = []
+if "chat_history_rag" not in st.session_state:
+    st.session_state.chat_history_rag = []
 
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
-# ========== MODE 1: Data Analysis ==========
+# ====== MODE 1: Data Analysis ======
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
+    chat_placeholder_data = st.empty()  # container selalu ada
 
+    df = None
     if uploaded_file is not None:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
@@ -132,40 +136,39 @@ with tab1:
         sheet_names = list(st.session_state.dfs.keys())
         selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
 
-        if not selected_sheets:
-            st.warning("Pilih minimal satu sheet untuk analisis.")
-            st.stop()
+        if selected_sheets:
+            if len(selected_sheets) == 1:
+                df = st.session_state.dfs[selected_sheets[0]]
+                sheet_label = selected_sheets[0]
+            else:
+                df_list = []
+                for s in selected_sheets:
+                    temp = st.session_state.dfs[s].copy()
+                    temp["SheetName"] = s
+                    df_list.append(temp)
+                df = pd.concat(df_list, ignore_index=True)
+                sheet_label = ", ".join(selected_sheets)
 
-        if len(selected_sheets) == 1:
-            df = st.session_state.dfs[selected_sheets[0]]
-            sheet_label = selected_sheets[0]
-        else:
-            df_list = []
-            for s in selected_sheets:
-                temp = st.session_state.dfs[s].copy()
-                temp["SheetName"] = s
-                df_list.append(temp)
-            df = pd.concat(df_list, ignore_index=True)
-            sheet_label = ", ".join(selected_sheets)
+            st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
+            st.dataframe(df.head(10))
 
-        st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
-        st.dataframe(df.head(10))
+            categorical_cols, numeric_cols = detect_data_types(df)
+            st.write(f"Kolom Numerik: {numeric_cols}")
+            st.write(f"Kolom Kategorikal: {categorical_cols}")
+            st.text(df_info_text(df))
+            st.write(f"**Data shape:** {df.shape}")
+            st.dataframe(safe_describe(df))
 
-        categorical_cols, numeric_cols = detect_data_types(df)
-        st.write(f"Kolom Numerik: {numeric_cols}")
-        st.write(f"Kolom Kategorikal: {categorical_cols}")
-        st.text(df_info_text(df))
-        st.write(f"**Data shape:** {df.shape}")
-        st.dataframe(safe_describe(df))
+            num_df = df.select_dtypes(include="number")
+            if not num_df.empty:
+                st.write("**Correlation Heatmap**")
+                fig, ax = plt.subplots(figsize=(6, 4))
+                sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
+                st.pyplot(fig)
 
-        num_df = df.select_dtypes(include="number")
-        if not num_df.empty:
-            st.write("**Correlation Heatmap**")
-            fig, ax = plt.subplots(figsize=(6, 4))
-            sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
-            st.pyplot(fig)
-
-        # ====== LLM Fallback ======
+    # ====== Chatbot Data Analysis ======
+    with chat_placeholder_data.container():
+        # Inisialisasi LLM fallback
         llm = None
         if os.getenv("GOOGLE_API_KEY"):
             try:
@@ -173,72 +176,80 @@ with tab1:
                 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",
                                              google_api_key=os.getenv("GOOGLE_API_KEY"),
                                              temperature=0.2)
-            except Exception as e:
-                st.warning(f"⚠️ Google LLM tidak tersedia: {e}")
-
+            except:
+                pass
         if llm is None:
             try:
                 llm = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
-            except Exception as e:
-                st.warning(f"⚠️ HF fallback LLM error: {e}")
+            except:
+                pass
 
         if llm:
             user_query = st.chat_input("Tanyakan sesuatu tentang data...")
             if user_query:
                 st.chat_message("user").markdown(user_query)
-                st.session_state.chat_history.append(("user", user_query))
+                st.session_state.chat_history_data.append(("user", user_query))
                 with st.spinner("🔎 Menganalisis data..."):
                     try:
-                        preview = df.head(1000).to_csv(index=False)
+                        preview = df.head(1000).to_csv(index=False) if df is not None else ""
                         prompt = f"Anda adalah asisten analisis data.\nDataset sampel (1000 baris pertama):\n{preview}\nPertanyaan: {user_query}"
                         response = llm.invoke(prompt).content
                         st.chat_message("assistant").markdown(response)
-                        st.session_state.chat_history.append(("assistant", response))
+                        st.session_state.chat_history_data.append(("assistant", response))
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
 
-            # Tampilkan riwayat chat
-            for role, msg in st.session_state.chat_history:
+            # Riwayat chat
+            for role, msg in st.session_state.chat_history_data:
                 st.chat_message(role).markdown(msg)
 
-# ========== MODE 2: RAG Advanced ==========
+# ====== MODE 2: RAG Advanced ======
 with tab2:
     uploaded_files = st.file_uploader(
         "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar) → bisa multi-file",
         type=["pdf", "txt", "docx", "pptx", "csv", "xls", "xlsx", "png", "jpg", "jpeg", "bmp"],
         accept_multiple_files=True
     )
+    chat_placeholder_rag = st.empty()
 
+    vectorstore = None
     if uploaded_files:
         st.markdown("### 📂 Dokumen yang diupload:")
         for f in uploaded_files:
             st.write("- " + f.name)
-
         vectorstore = build_vectorstore(uploaded_files)
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
+    with chat_placeholder_rag.container():
+        # LLM RAG
+        llm_rag = None
         try:
-            llm = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
-        except Exception as e:
-            st.warning(f"⚠️ HF LLM gagal inisialisasi: {e}")
-            llm = None
+            llm_rag = HuggingFacePipeline.from_model_id(model_id="google/flan-t5-small", task="text2text-generation")
+        except:
+            pass
 
-        if llm:
-            qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever, return_source_documents=True)
+        if llm_rag and vectorstore:
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+            qa_chain = RetrievalQA.from_chain_type(llm=llm_rag, retriever=retriever, return_source_documents=True)
             st.success("✅ Chatbot RAG siap digunakan")
 
-            user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
-            if user_query:
-                st.chat_message("user").markdown(user_query)
+            user_query_rag = st.chat_input("Tanyakan sesuatu tentang dokumen...")
+            if user_query_rag:
+                st.chat_message("user").markdown(user_query_rag)
+                st.session_state.chat_history_rag.append(("user", user_query_rag))
                 with st.spinner("🔎 Menganalisis dokumen..."):
                     try:
-                        result = qa_chain({"query": user_query})
+                        result = qa_chain({"query": user_query_rag})
                         answer = result["result"]
                         sources = result.get("source_documents", [])
                         st.chat_message("assistant").markdown(answer)
+                        st.session_state.chat_history_rag.append(("assistant", answer))
                         if sources:
                             st.write("**Sumber:**")
                             for s in sources:
                                 st.caption(f"{s.metadata.get('source','')} → {s.page_content[:200]}...")
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
+
+            # Riwayat chat
+            for role, msg in st.session_state.chat_history_rag:
+                st.chat_message(role).markdown(msg)
