@@ -1,7 +1,5 @@
 # app-multisheet-rag.py
 
-# app-multisheet-rag.py
-
 import streamlit as st
 import os, io
 import pandas as pd
