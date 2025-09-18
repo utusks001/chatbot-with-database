@@ -1,10 +1,13 @@
-# app.py
+# app-multisheet.py
 
 import streamlit as st
-import pandas as pd
 import io
-import matplotlib.pyplot as plt
 import os
+
+# Data analysis
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from utils1 import detect_data_types, recommend_and_plot
 
@@ -19,14 +22,12 @@ os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
 
 # ========= Helper Functions =========
 def safe_describe(df: pd.DataFrame):
-    """Cegah error jika describe gagal."""
     try:
         return df.describe(include="all").transpose()
     except Exception as e:
         return pd.DataFrame({"Error": [str(e)]})
 
 def df_info_text(df: pd.DataFrame):
-    """Ambil info() dataframe sebagai string."""
     buf = io.StringIO()
     df.info(buf=buf)
     return buf.getvalue()
@@ -58,13 +59,115 @@ if uploaded_file is not None:
         xls = pd.ExcelFile(uploaded_file)
         st.session_state.dfs = {sheet: pd.read_excel(uploaded_file, sheet_name=sheet) for sheet in xls.sheet_names}
 
-    # ===== Sidebar pilih sheet =====
+    # ===== Sidebar multi-select =====
     with st.sidebar:
         st.subheader("Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
-        selected_sheet = st.selectbox("Sheet Aktif", sheet_names)
+        selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
 
-    df = st.session_state.dfs[selected_sheet]
+    if not selected_sheets:
+        st.warning("Pilih minimal satu sheet untuk analisis.")
+        st.stop()
+
+    # ===== Gabung jika multi-sheet =====
+    if len(selected_sheets) == 1:
+        df = st.session_state.dfs[selected_sheets[0]]
+        sheet_label = selected_sheets[0]
+    else:
+        df_list = []
+        for s in selected_sheets:
+            temp = st.session_state.dfs[s].copy()
+            temp["SheetName"] = s
+            df_list.append(temp)
+        df = pd.concat(df_list, ignore_index=True)
+        sheet_label = ", ".join(selected_sheets)
+        num_df = df.select_dtypes(include="number")
 
     # ===== Info file =====
-    st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet: {s_
+    st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
+    
+    # ===== Preview data =====
+    st.write("**Head (10):**")
+    st.dataframe(df.head(10))
+    st.write("**Tail (10):**")
+    st.dataframe(df.tail(10))
+    
+    # ===== Ringkasan =====
+    categorical_cols, numeric_cols = detect_data_types(df)
+    st.write("**Ringkasan Kolom**")
+    st.write(f"Kolom Numerik: {numeric_cols}")
+    st.write(f"Kolom Kategorikal: {categorical_cols}")
+    
+    st.write("**Info():**")
+    st.text(df_info_text(df))
+    
+    st.write(f"**Data shape:** {df.shape}")
+    
+    st.write("**Data information:**")
+    for index, (col, dtype) in enumerate(zip(df.columns, df.dtypes)):
+        non_null_count = df[col].count()
+        st.write(f"{index} | {col}   | {non_null_count} non-null  |  {dtype}") 
+    
+    missing_values = df.isnull().sum()
+    st.write("**Missing Values:**")
+    st.write(missing_values)
+    
+    duplicates_count = df.duplicated().sum()
+    st.write(f"**Number of Duplicates :** {duplicates_count}")
+    
+    df_no_dupes = df.drop_duplicates()
+    st.write(f"**Number of Duplicates Removed:** {len(df) - len(df_no_dupes)}")
+    
+    st.write("**Describe():**")
+    st.dataframe(safe_describe(df))
+    
+    st.write("**Summary Statistics:**")
+    st.write(df.describe(include="all"))
+
+    if not num_df.empty:
+        st.write("**Correlation Heatmap**")
+        fig, ax = plt.subplots(figsize=(5, 3))
+        sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
+        st.pyplot(fig)
+    
+    # ===== Inisialisasi Chatbot (per kombinasi sheet) =====
+    agent_key = f"agent_{sheet_label}"
+    if agent_key not in st.session_state:
+        try:
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash", 
+                google_api_key=st.secrets["GOOGLE_API_KEY"]
+            )
+            st.session_state[agent_key] = create_pandas_dataframe_agent(
+                llm,
+                df,
+                verbose=True,
+                agent_type=AgentType.OPENAI_FUNCTIONS,
+                allow_dangerous_code=True
+            )
+            st.success(f"Chatbot siap! (Sheet: {sheet_label})")
+        except Exception as e:
+            st.error(f"Gagal inisialisasi chatbot. Pastikan API key Anda benar: {e}")
+            st.stop()
+            
+    # ===== Chat input =====
+    st.subheader(f"Tanyakan Sesuatu Tentang Data (Sheet: {sheet_label})")
+    user_query = st.chat_input("Contoh: 'Berapa rata-rata pendapatan?'")
+
+    if user_query:
+        st.session_state.messages.append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
+
+        with st.spinner("Memproses..."):
+            try:
+                response = st.session_state[agent_key].run(user_query)
+                with st.chat_message("assistant"):
+                    st.markdown(response)
+                    st.session_state.messages.append({"role": "assistant", "content": response})
+            except Exception as e:
+                st.error(f"Maaf, terjadi kesalahan saat memproses permintaan: {e}")
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": "Maaf, terjadi kesalahan saat memproses permintaan."}
+                )
+
