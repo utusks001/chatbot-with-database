@@ -6,23 +6,24 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from dotenv import load_dotenv
+import requests
 
-# LangChain
+# LangChain & RAG
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
 from langchain.chains import RetrievalQA
+from langchain_community.llms import HuggingFacePipeline
 
 # File loaders
 from PyPDF2 import PdfReader
 import docx
 from pptx import Presentation
 from PIL import Image
-import requests
 
-# ====== Load dotenv ======
+# ====== Load dotenv kalau lokal ======
+from dotenv import load_dotenv
 dotenv_path = Path(".env")
 if dotenv_path.exists():
     load_dotenv(dotenv_path)
@@ -45,26 +46,24 @@ def detect_data_types(df: pd.DataFrame):
     return categorical_cols, numeric_cols
 
 # ====== OCR.Space Helper ======
+OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "")
+
 def ocr_image(file):
-    OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "")
-    if not OCR_SPACE_API_KEY:
-        st.error("⚠️ OCR_SPACE_API_KEY tidak ditemukan di .env")
-        return ""
-    try:
-        file.seek(0)
-        resp = requests.post(
-            "https://api.ocr.space/parse/image",
-            files={"file": file},
-            data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
-        )
-        data = resp.json()
-        text = ""
-        if data.get("ParsedResults"):
-            text = data["ParsedResults"][0].get("ParsedText", "")
-        return text
-    except Exception as e:
-        st.warning(f"⚠️ OCR.Space error: {e}")
-        return ""
+    text = ""
+    file.seek(0)
+    if OCR_SPACE_API_KEY:
+        try:
+            resp = requests.post(
+                "https://api.ocr.space/parse/image",
+                files={"file": file},
+                data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
+            )
+            data = resp.json()
+            if "ParsedResults" in data and data["ParsedResults"]:
+                text = data["ParsedResults"][0].get("ParsedText", "")
+        except Exception as e:
+            st.warning(f"⚠️ OCR.Space error: {e}")
+    return text
 
 # ====== Build Vectorstore ======
 def build_vectorstore(files):
@@ -80,15 +79,15 @@ def build_vectorstore(files):
             elif name.endswith(".csv"):
                 df = pd.read_csv(file)
                 text = df.to_csv(index=False)
-            elif name.endswith(".xlsx") or name.endswith(".xls"):
+            elif name.endswith((".xlsx", ".xls")):
                 xls = pd.ExcelFile(file)
                 text = ""
                 for sheet in xls.sheet_names:
                     df = pd.read_excel(file, sheet_name=sheet)
-                    text += f"[{sheet}]\n" + df.to_csv(index=False)
+                    text += f"[{sheet}]\n" + df.to_csv(index=False) + "\n"
             elif name.endswith(".docx"):
                 doc = docx.Document(file)
-                text = "\n".join([para.text for para in doc.paragraphs])
+                text = "\n".join([p.text for p in doc.paragraphs])
             elif name.endswith(".pptx"):
                 prs = Presentation(file)
                 text = "\n".join([shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text")])
@@ -96,29 +95,20 @@ def build_vectorstore(files):
                 text = ocr_image(file)
             else:
                 text = file.read().decode("utf-8", errors="ignore")
-
-            if text.strip():
-                docs.append(Document(page_content=text, metadata={"source": name}))
-        except Exception:
-            continue
-
-    if not docs:
-        st.error("⚠️ Tidak ada dokumen yang bisa diproses. Pastikan file tidak kosong dan OCR berhasil.")
-        return None
+            docs.append(Document(page_content=text, metadata={"source": name}))
+        except Exception as e:
+            st.warning(f"⚠️ Gagal load file {name}: {e}")
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     split_docs = splitter.split_documents(docs)
 
-    if not split_docs:
-        st.error("⚠️ Semua dokumen kosong setelah split. Tidak bisa membangun vectorstore.")
-        return None
-
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return FAISS.from_documents(split_docs, embeddings)
+    vectorstore = FAISS.from_documents(split_docs, embeddings)
+    return vectorstore
 
 # ====== Main App ======
 st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
-st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + Gemini/HF)")
+st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF)")
 
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
@@ -174,49 +164,10 @@ with tab1:
             sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", ax=ax)
             st.pyplot(fig)
 
-        if os.getenv("GOOGLE_API_KEY"):
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                google_api_key=os.getenv("GOOGLE_API_KEY"),
-                temperature=0.2
-            )
-        else:
-            llm = None
-
-        if llm:
-            if "chat_history" not in st.session_state:
-                st.session_state.chat_history = []
-
-            user_query = st.chat_input("Tanyakan sesuatu tentang data...")
-            if user_query:
-                st.chat_message("user").markdown(user_query)
-                st.session_state.chat_history.append(("user", user_query))
-
-                with st.spinner("🔎 Menganalisis data..."):
-                    try:
-                        preview = df.head(1000).to_csv(index=False)
-                        prompt = f"""
-                        Anda adalah asisten analisis data.
-                        Dataset sampel (1000 baris pertama):
-
-                        {preview}
-
-                        Pertanyaan: {user_query}
-                        """
-                        response = llm.invoke(prompt).content
-                        st.chat_message("assistant").markdown(response)
-                        st.session_state.chat_history.append(("assistant", response))
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
-
-            for role, msg in st.session_state.chat_history:
-                st.chat_message(role).markdown(msg)
-
-# ========== MODE 2: RAG Advanced (Ultra-Lite OCR.Space + HF embeddings) ==========
+# ========== MODE 2: RAG Advanced ==========
 with tab2:
     uploaded_files = st.file_uploader(
-        "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar) → bisa multi-file",
+        "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar dengan teks) → bisa multi-file",
         type=["pdf", "txt", "docx", "pptx", "csv", "xls", "xlsx", "png", "jpg", "jpeg", "bmp"],
         accept_multiple_files=True
     )
@@ -227,11 +178,14 @@ with tab2:
             st.write("- " + f.name)
 
         vectorstore = build_vectorstore(uploaded_files)
-        if vectorstore is None:
-            st.stop()
-
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-        llm = None  # ultra-lite: hanya HF embeddings
+
+        # Pakai LLM ringan lokal HF
+        llm = HuggingFacePipeline.from_model_id(
+            model_id="google/flan-t5-small",
+            task="text2text-generation"
+        )
+
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             retriever=retriever,
