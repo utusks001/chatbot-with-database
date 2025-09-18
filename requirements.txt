@@ -30,20 +30,20 @@ chromadb
 openpyxl
 python-dotenv
 toml
-streamlit>=1.24.1
-pandas>=2.1.0
-matplotlib>=3.8.1
-seaborn>=0.12.3
-requests>=2.31.0
-pillow>=10.0.0
-PyPDF2>=3.1.0
-python-docx>=0.8.11
-python-pptx>=0.6.21
-langchain>=0.1.0
-sentence-transformers>=2.2.2
-faiss-cpu>=1.7.4
-transformers>=4.34.0
-torch>=2.1.0
+streamlit
+pandas
+matplotlib
+seaborn
+requests
+pillow
+PyPDF2
+python-docx
+python-pptx
+langchain
+sentence-transformers
+faiss-cpu
+transformers
+torch
 # 
 # LangChain & Google Gemini
 langchain-google-genai
@@ -51,6 +51,21 @@ google-ai-generativelanguage
 # 
 # langchain-google-genai>=0.1.12
 # google-ai-generativelanguage>=1.0.0
+# streamlit>=1.24.1
+# pandas>=2.1.0
+# matplotlib>=3.8.1
+# seaborn>=0.12.3
+# requests>=2.31.0
+# pillow>=10.0.0
+# PyPDF2>=3.1.0
+# python-docx>=0.8.11
+# python-pptx>=0.6.21
+# langchain>=0.1.0
+# sentence-transformers>=2.2.2
+# faiss-cpu>=1.7.4
+# transformers>=4.34.0
+# torch>=2.1.0
+# 
 # streamlit>=1.24.1
 # pandas>=2.0
 # matplotlib>=3.8
