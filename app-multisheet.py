@@ -16,9 +16,11 @@ from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents.agent_types import AgentType
 
-# Setup LangSmith (opsional)
+# ========= Setup LangSmith (opsional, pakai fallback) =========
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
+os.environ["LANGCHAIN_API_KEY"] = st.secrets.get("LANGCHAIN_API_KEY", "")
+
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 
 # ========= Helper Functions =========
 def safe_describe(df: pd.DataFrame):
@@ -57,18 +59,13 @@ if uploaded_file is not None:
         st.session_state.dfs = {"CSV": df}
     else:
         xls = pd.ExcelFile(uploaded_file)
-        st.session_state.dfs = {
-            sheet: pd.read_excel(uploaded_file, sheet_name=sheet) 
-            for sheet in xls.sheet_names
-        }
+        st.session_state.dfs = {sheet: pd.read_excel(uploaded_file, sheet_name=sheet) for sheet in xls.sheet_names}
 
     # ===== Sidebar multi-select =====
     with st.sidebar:
         st.subheader("Pilih Sheet")
         sheet_names = list(st.session_state.dfs.keys())
-        selected_sheets = st.multiselect(
-            "Sheet Aktif", sheet_names, default=sheet_names[:1]
-        )
+        selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
 
     if not selected_sheets:
         st.warning("Pilih minimal satu sheet untuk analisis.")
@@ -86,9 +83,6 @@ if uploaded_file is not None:
             df_list.append(temp)
         df = pd.concat(df_list, ignore_index=True)
         sheet_label = ", ".join(selected_sheets)
-
-    # numeric subset (supaya tidak error walau single sheet)
-    num_df = df.select_dtypes(include="number")
 
     # ===== Info file =====
     st.markdown(f"### 📄 Analisa: {uploaded_file.name} — Sheet(s): {sheet_label}")
@@ -132,6 +126,7 @@ if uploaded_file is not None:
     st.write(df.describe(include="all"))
 
     # ===== Correlation Heatmap =====
+    num_df = df.select_dtypes(include="number")
     if not num_df.empty:
         st.write("**Correlation Heatmap**")
         fig, ax = plt.subplots(figsize=(5, 3))
@@ -140,11 +135,11 @@ if uploaded_file is not None:
     
     # ===== Inisialisasi Chatbot (per kombinasi sheet) =====
     agent_key = f"agent_{sheet_label}"
-    if agent_key not in st.session_state:
+    if agent_key not in st.session_state and GOOGLE_API_KEY:
         try:
             llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash", 
-                google_api_key=st.secrets["GOOGLE_API_KEY"]
+                google_api_key=GOOGLE_API_KEY
             )
             st.session_state[agent_key] = create_pandas_dataframe_agent(
                 llm,
@@ -155,28 +150,29 @@ if uploaded_file is not None:
             )
             st.success(f"Chatbot siap! (Sheet: {sheet_label})")
         except Exception as e:
-            st.error(f"Gagal inisialisasi chatbot. Pastikan API key Anda benar: {e}")
+            st.error(f"Gagal inisialisasi chatbot: {e}")
             st.stop()
-            
+    elif not GOOGLE_API_KEY:
+        st.warning("⚠️ GOOGLE_API_KEY belum diset. Chatbot nonaktif.")
+
     # ===== Chat input =====
-    st.subheader(f"Tanyakan Sesuatu Tentang Data (Sheet: {sheet_label})")
-    user_query = st.chat_input("Contoh: 'Berapa rata-rata pendapatan?'")
+    if GOOGLE_API_KEY:
+        st.subheader(f"Tanyakan Sesuatu Tentang Data (Sheet: {sheet_label})")
+        user_query = st.chat_input("Contoh: 'Berapa rata-rata pendapatan?'")
 
-    if user_query:
-        st.session_state.messages.append({"role": "user", "content": user_query})
-        with st.chat_message("user"):
-            st.markdown(user_query)
+        if user_query:
+            st.session_state.messages.append({"role": "user", "content": user_query})
+            with st.chat_message("user"):
+                st.markdown(user_query)
 
-        with st.spinner("Memproses..."):
-            try:
-                response = st.session_state[agent_key].run(user_query)
-                with st.chat_message("assistant"):
-                    st.markdown(response)
+            with st.spinner("Memproses..."):
+                try:
+                    response = st.session_state[agent_key].run(user_query)
+                    with st.chat_message("assistant"):
+                        st.markdown(response)
+                        st.session_state.messages.append({"role": "assistant", "content": response})
+                except Exception as e:
+                    st.error(f"Maaf, terjadi kesalahan saat memproses permintaan: {e}")
                     st.session_state.messages.append(
-                        {"role": "assistant", "content": response}
+                        {"role": "assistant", "content": "Maaf, terjadi kesalahan saat memproses permintaan."}
                     )
-            except Exception as e:
-                st.error(f"Maaf, terjadi kesalahan saat memproses permintaan: {e}")
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": "Maaf, terjadi kesalahan saat memproses permintaan."}
-                )
