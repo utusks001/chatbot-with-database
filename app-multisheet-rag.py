@@ -187,7 +187,7 @@ if menu == "📑 Data Analysis (Excel/CSV)":
     
         # Display summary statistics of the DataFrame
         st.write("**Summary Statistics:**")
-    ````st.write(df.describe(include="all"))
+        st.write(df.describe(include="all"))
 
         st.write("### Visualisasi")
         col_x = st.selectbox("Pilih kolom X", df.columns)
