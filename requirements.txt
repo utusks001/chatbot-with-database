@@ -20,7 +20,7 @@ seaborn
 pandas
 numpy
 plotly
-pytesseract
+# pytesseract
 pdfplumber
 scikit-learn
 langchain-google-genai
