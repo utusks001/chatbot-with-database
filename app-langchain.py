@@ -72,13 +72,15 @@ def detect_column_types(df: pd.DataFrame):
     return numeric_cols, categorical_cols, datetime_cols
 
 def generate_dataset_insight(df: pd.DataFrame):
-    stats = safe_describe(df).reset_index().to_markdown()
+    stats = safe_describe(df).reset_index().to_string()
     prompt = ChatPromptTemplate.from_template("""
     Kamu adalah analis data. 
     Berdasarkan statistik berikut:
     {stats}
     
-    Buatkan insight utama dan kesimpulan dengan bahasa natural, ringkas, dan mudah dipahami.
+    Buatkan insight utama dan kesimpulan seakurat dan sedetil mungkin berdasarkan konteks dengan bahasa natural, ringkas, dan mudah dipahami.
+    Jika konteks berupa ringkasan tabel (CSV/Excel), gunakan metrik yang tersedia (shape, dtypes, missing, describe, sample). 
+    Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
     """)
     chain = prompt | llm
     return chain.invoke({"stats": stats}).content
