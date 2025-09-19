@@ -80,7 +80,6 @@ def generate_dataset_insight(df: pd.DataFrame, question: str = None):
 # OCR for images
 # ======================
 def ocr_image(file_path):
-    """Ekstrak teks dari gambar via OCR.Space"""
     with open(file_path, "rb") as f:
         r = requests.post(
             "https://api.ocr.space/parse/image",
@@ -215,7 +214,13 @@ with tab2:
         retriever = st.session_state.vectorstore.as_retriever()
         docs = retriever.get_relevant_documents(q2)
         context = "\n".join([d.page_content for d in docs[:3]])
-        prompt = ChatPromptTemplate.from_template("""
+        prompt_template = f"""
         Jawab pertanyaan berikut secara akurat, jelas dan ringkas berdasarkan dokumen konteks.
         Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-        Pertanyaan: {q}
+        Pertanyaan: {q2}
+        Konteks: {context}
+        Jawaban ringkas:
+        """
+        prompt = ChatPromptTemplate.from_template(prompt_template)
+        chain = prompt | llm
+        st.write(chain.invoke({}).content)
