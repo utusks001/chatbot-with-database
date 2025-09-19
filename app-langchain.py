@@ -41,7 +41,7 @@ def df_info_text(df: pd.DataFrame) -> str:
     """Ringkasan dataset sederhana"""
     info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
     info += "Kolom:\n" + ", ".join(df.columns[:10])
-    if df.shape[1] > 10:
+    if df.shape[1] > 30:
         info += " ..."
     return info
     
