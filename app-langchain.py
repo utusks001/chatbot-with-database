@@ -78,7 +78,7 @@ def generate_dataset_insight(df: pd.DataFrame):
     Berdasarkan statistik berikut:
     {stats}
     
-    Buatkan insight utama dan kesimpulan seakurat dan sedetil mungkin berdasarkan konteks dengan bahasa natural, ringkas, dan mudah dipahami.
+    Buatkan insight utama dan kesimpulan secara akurat, jelas dan sedetil mungkin berdasarkan konteks dengan bahasa natural, sopan, ringkas, dan mudah dipahami.
     Jika konteks berupa ringkasan tabel (CSV/Excel), gunakan metrik yang tersedia (shape, dtypes, missing, describe, sample). 
     Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
     """)
@@ -204,7 +204,9 @@ with tab2:
         context = "\n".join([d.page_content for d in docs[:3]])
 
         prompt = ChatPromptTemplate.from_template("""
-        Jawab pertanyaan berikut berdasarkan konteks dokumen.
+        Jawab pertanyaan berikut secara akurat, jelas dan sedetil mungkin berdasarkan dokumen konteks dengan bahasa natural, sopan, ringkas, dan mudah dipahami.
+        Jika konteks berupa ringkasan tabel (CSV/Excel), gunakan metrik yang tersedia (shape, dtypes, missing, describe, sample). 
+        Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
         Pertanyaan: {q}
         Konteks: {context}
         Jawaban ringkas:
