@@ -2,7 +2,6 @@ langchain-community
 openpyxl
 python-dotenv
 toml
-PIL
 requests
 pillow
 PyPDF2
@@ -13,15 +12,15 @@ sentence-transformers
 faiss-cpu
 transformers
 pathlib
-# torch
+torch
 streamlit
 matplotlib
 seaborn
 pandas
 numpy
-# plotly
+plotly
 pytesseract
-# pdfplumber
+pdfplumber
 scikit-learn
 langchain-google-genai
 google-ai-generativelanguage
