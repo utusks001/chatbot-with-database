@@ -5,7 +5,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from langchain.prompts import ChatPromptTemplate
-from langchain.chat_models import ChatGroq
+from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
