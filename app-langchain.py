@@ -22,11 +22,6 @@ from langchain.document_loaders import (
 )
 import tempfile, os
 
-st.set_page_config(
-    page_title="Chatbot Data Analysis dan RAG Advanced",
-    page_icon="🤖",
-    layout="wide"
-)
 
 # =====================
 # Init Session State
@@ -116,8 +111,14 @@ def process_rag_files(uploaded_files):
 # =====================
 # UI Tabs
 # =====================
-st.title("🤖 Chatbot — Data Analysis + RAG Advanced")
-st.set_page_config(page_title="📊 Data & Document Chatbot", layout="wide")
+
+st.title("🤖📊 AI Chatbot Dashboard for Data Analysis and Advanced RAG")
+st.set_page_config(
+    page_title="AI Chatbot Dashboard and Advanced RAG",
+    page_icon="🤖📊",
+    layout="wide"
+)
+
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
 # ====== MODE 1: Data Analysis ======
