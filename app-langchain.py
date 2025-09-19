@@ -1,195 +1,151 @@
 # app-langchain.py
 
+import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import matplotlib.pyplot as plt
-import seaborn as sns
-import tempfile, os
+from langchain.prompts import ChatPromptTemplate
+from langchain.chat_models import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-from langchain_community.document_loaders import (
-    PyPDFLoader, Docx2txtLoader, TextLoader,
-    UnstructuredPowerPointLoader, UnstructuredImageLoader
-)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import (
+    PyPDFLoader, Docx2txtLoader, TextLoader, UnstructuredPowerPointLoader, UnstructuredImageLoader
+)
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-from transformers import pipeline
-from langchain_community.llms import HuggingFacePipeline
+# ========== LLM LOADER ==========
+def load_llm():
+    if os.getenv("GEMINI_API_KEY"):
+        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    elif os.getenv("GROQ_API_KEY"):
+        return ChatGroq(model="llama3-8b-8192", temperature=0)
+    else:
+        st.warning("⚠️ No LLM API key found. Using fallback mode.")
+        return None
 
-# ====== INIT ======
-st.set_page_config(page_title="📊 Data Analysis + 📚 RAG Assistant", layout="wide")
+llm = load_llm()
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "dfs" not in st.session_state:
-    st.session_state.dfs = {}
-if "rag_qa" not in st.session_state:
-    st.session_state.rag_qa = None
+def detect_data_types(df):
+    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    return cat_cols, num_cols
 
-# HuggingFace pipeline (lebih stabil daripada HuggingFaceHub)
-generator = pipeline("text2text-generation", model="google/flan-t5-large")
-llm = HuggingFacePipeline(pipeline=generator)
+def df_info_text(df: pd.DataFrame) -> str:
+    """Ringkasan dataset sederhana"""
+    info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
+    info += "Kolom:\n" + ", ".join(df.columns[:10])
+    if df.shape[1] > 10:
+        info += " ..."
+    return info
 
-# ====== UTILS ======
 def safe_describe(df):
     try:
         return df.describe(include="all")
     except Exception:
-        return df.describe()
+        return pd.DataFrame()
 
-def detect_data_types(df):
-    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    return categorical_cols, numeric_cols
+# ========== Streamlit CONFIG ==========
+st.set_page_config(page_title="📊 Data Analysis + 📚 RAG Chatbot", layout="wide")
+st.title("🤖 Chatbot: Data Analysis + RAG Advanced")
 
-def df_info_text(df):
-    buf = []
-    buf.append(f"Jumlah baris: {df.shape[0]}")
-    buf.append(f"Jumlah kolom: {df.shape[1]}")
-    buf.append("Tipe kolom:")
-    buf.append(str(df.dtypes))
-    return "\n".join(buf)
+tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
-def generate_insight_with_llm(df, x_axis, y_axis):
-    try:
-        subset = df[[x_axis, y_axis]].dropna().head(50)
-        prompt = PromptTemplate.from_template(
-            "Berikan insight ringkas dalam bahasa alami dari data berikut (format tabel):\n\n{data}\n\n"
-            "Fokus pada tren, pola, anomali, dan kesimpulan utama."
-        )
-        insight = llm(prompt.format(data=subset.to_string()))
-        return str(insight)
-    except Exception as e:
-        return f"⚠️ Gagal membuat insight otomatis: {e}"
-
-# ====== LAYOUT ======
-tab1, tab2 = st.tabs(["📊 Data Analysis", "📚 RAG Advanced"])
-
-# ====== MODE 1: Data Analysis ======
+# ========== TAB 1: DATA ANALYSIS ==========
 with tab1:
-    uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
-    if uploaded_file:
-        st.session_state.uploaded_file = uploaded_file
-
-    df = None
-    if "uploaded_file" in st.session_state:
-        f = st.session_state.uploaded_file
-        if f.name.endswith(".csv"):
-            df = pd.read_csv(f)
-            st.session_state.dfs = {"CSV": df}
+    st.subheader("Upload Dataset")
+    file = st.file_uploader("Upload CSV/Excel", type=["csv", "xlsx"])
+    if file:
+        if file.name.endswith(".csv"):
+            df = pd.read_csv(file)
         else:
-            xls = pd.ExcelFile(f)
-            st.session_state.dfs = {sheet: pd.read_excel(f, sheet_name=sheet) for sheet in xls.sheet_names}
+            df = pd.read_excel(file)
 
-        st.subheader("📑 Pilih Sheet")
-        sheet_names = list(st.session_state.dfs.keys())
-        selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=sheet_names[:1])
+        st.dataframe(df.head(10))
+        categorical_cols, numeric_cols = detect_data_types(df)
+        st.write(f"Kolom Numerik: {numeric_cols}")
+        st.write(f"Kolom Kategorikal: {categorical_cols}")
+        st.text(df_info_text(df))
+        st.write(f"**Data shape:** {df.shape}")
+        
+        # Dropdown for visualization
+        x_axis = st.selectbox("Pilih X-Axis", df.columns, index=0)
+        y_axis = st.selectbox("Pilih Y-Axis", df.columns, index=min(1, len(df.columns)-1))
 
-        if selected_sheets:
-            if len(selected_sheets) == 1:
-                df = st.session_state.dfs[selected_sheets[0]]
+        q = st.text_input("💬 Tanya tentang dataset:")
+        if q:
+            if "trend" in q.lower():
+                fig = px.line(df, x=x_axis, y=y_axis, title=f"Trend {y_axis} vs {x_axis}")
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Insight with LLM if available
+                if llm:
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", "Kamu adalah analis data yang ringkas."),
+                        ("human", f"Buat insight ringkas dari tren {y_axis} terhadap {x_axis} pada dataset ini:\n{df[[x_axis,y_axis]].head(20)}")
+                    ])
+                    response = llm.invoke(prompt.format_messages())
+                    st.success(response.content)
+                else:
+                    st.info(f"ℹ️ {y_axis} meningkat/menurun terhadap {x_axis} berdasarkan grafik.")
+            elif "statistik" in q.lower() or "summary" in q.lower():
+                st.dataframe(df.describe(include="all"))
+            elif "insight" in q.lower() or "kesimpulan" in q.lower():
+                if llm:
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", "Kamu adalah analis data."),
+                        ("human", f"Buat insight & kesimpulan utama dari dataset ini:\n{df.head(30)}")
+                    ])
+                    response = llm.invoke(prompt.format_messages())
+                    st.success(response.content)
+                else:
+                    st.info("Dataset menunjukkan pola tertentu, silakan analisis lebih lanjut.")
             else:
-                df_list = []
-                for s in selected_sheets:
-                    temp = st.session_state.dfs[s].copy()
-                    temp["SheetName"] = s
-                    df_list.append(temp)
-                df = pd.concat(df_list, ignore_index=True)
+                st.write("📊 Statistik umum:")
+                st.dataframe(df.describe(include="all"))
 
-            st.dataframe(df.head(10))
-            categorical_cols, numeric_cols = detect_data_types(df)
-            st.write(f"Kolom Numerik: {numeric_cols}")
-            st.write(f"Kolom Kategorikal: {categorical_cols}")
-            st.text(df_info_text(df))
-            st.write(f"**Data shape:** {df.shape}")
-            st.dataframe(safe_describe(df))
-
-            if not df.select_dtypes(include="number").empty:
-                fig, ax = plt.subplots(figsize=(6, 4))
-                sns.heatmap(df.select_dtypes(include="number").corr(), annot=True, cmap="coolwarm", ax=ax)
-                st.pyplot(fig)
-
-            st.subheader("📈 Buat Grafik Tren")
-            x_axis = st.selectbox("Pilih kolom X (axis)", df.columns, index=0)
-            y_axis = st.selectbox("Pilih kolom Y (axis)", df.columns, index=1)
-
-            if st.button("Tampilkan Grafik"):
-                if x_axis and y_axis:
-                    trend_df = df[[x_axis, y_axis]].dropna().sort_values(x_axis)
-                    if pd.api.types.is_datetime64_any_dtype(trend_df[x_axis]):
-                        trend_df = trend_df.groupby(x_axis, as_index=False)[y_axis].sum()
-                    fig = px.line(trend_df, x=x_axis, y=y_axis, title=f"Grafik tren {y_axis} vs {x_axis}")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    insight = generate_insight_with_llm(trend_df, x_axis, y_axis)
-                    st.success(f"**Insight:** {insight}")
-
-# ====== MODE 2: RAG Advanced ======
+# ========== TAB 2: RAG ADVANCED ==========
 with tab2:
-    rag_files = st.file_uploader(
-        "Upload dokumen (PDF, TXT, DOCX, PPTX, Image)",
-        type=["pdf","txt","docx","pptx","jpg","jpeg","png","bmp","gif"],
-        accept_multiple_files=True
-    )
-    if rag_files:
-        docs = []
-        for file in rag_files:
-            with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                tmp.write(file.read())
-                tmp_path = tmp.name
-            if file.name.endswith(".pdf"):
-                loader = PyPDFLoader(tmp_path)
-            elif file.name.endswith(".docx"):
-                loader = Docx2txtLoader(tmp_path)
-            elif file.name.endswith(".txt"):
-                loader = TextLoader(tmp_path)
-            elif file.name.endswith(".pptx"):
-                loader = UnstructuredPowerPointLoader(tmp_path)
-            else:
-                loader = UnstructuredImageLoader(tmp_path)
-            docs.extend(loader.load())
+    st.subheader("Upload Dokumen (TXT, PDF, DOCX, PPTX, Gambar)")
+    rag_file = st.file_uploader("Upload file untuk RAG", type=["txt", "pdf", "docx", "pptx", "jpg", "png", "bmp", "gif", "tiff"])
 
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-        splits = text_splitter.split_documents(docs)
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.from_documents(splits, embeddings)
-        st.session_state.rag_qa = RetrievalQA.from_chain_type(
-            llm=llm, retriever=vectorstore.as_retriever()
-        )
-        st.success("✅ RAG siap digunakan!")
+    if rag_file:
+        file_path = os.path.join("temp", rag_file.name)
+        os.makedirs("temp", exist_ok=True)
+        with open(file_path, "wb") as f:
+            f.write(rag_file.read())
 
-# ====== CHATBOT ROOT ======
-st.subheader("💬 Chatbot")
-
-user_query = st.chat_input("Tanyakan sesuatu...")
-if user_query:
-    st.session_state.chat_history.append(("user", user_query))
-
-    response = "⚠️ Tidak ada konteks."
-    if st.session_state.get("uploaded_file") and df is not None and tab1:
-        if "statistik" in user_query.lower():
-            response = str(safe_describe(df))
-        elif "tren" in user_query.lower():
-            response = "📈 Gunakan fitur grafik tren di atas."
-        elif "kategori" in user_query.lower():
-            cats, _ = detect_data_types(df)
-            response = f"Kolom kategorikal: {cats}"
+        # Loader sesuai tipe file
+        if rag_file.name.endswith(".pdf"):
+            loader = PyPDFLoader(file_path)
+        elif rag_file.name.endswith(".docx"):
+            loader = Docx2txtLoader(file_path)
+        elif rag_file.name.endswith(".pptx"):
+            loader = UnstructuredPowerPointLoader(file_path)
+        elif rag_file.name.endswith((".jpg",".png",".bmp",".gif",".tiff")):
+            loader = UnstructuredImageLoader(file_path)
         else:
-            sample = df.head(50).to_string()
-            prompt = PromptTemplate.from_template(
-                "Jawab pertanyaan berikut berdasarkan dataset:\n\nPertanyaan: {q}\n\nData:\n{data}"
-            )
-            response = llm(prompt.format(q=user_query, data=sample))
+            loader = TextLoader(file_path)
 
-    elif st.session_state.get("rag_qa"):
-        response = st.session_state.rag_qa.run(user_query)
+        docs = loader.load()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = splitter.split_documents(docs)
 
-    st.session_state.chat_history.append(("assistant", response))
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        vectorstore = FAISS.from_documents(chunks, embeddings)
 
-for role, msg in st.session_state.chat_history:
-    with st.chat_message(role):
-        st.markdown(msg)
+        q2 = st.text_input("💬 Tanya tentang dokumen:")
+        if q2:
+            results = vectorstore.similarity_search(q2, k=3)
+            context = "\n\n".join([r.page_content for r in results])
+
+            if llm:
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", "Kamu adalah asisten RAG yang menjawab berdasarkan dokumen."),
+                    ("human", f"Pertanyaan: {q2}\n\nKonteks:\n{context}")
+                ])
+                response = llm.invoke(prompt.format_messages())
+                st.success(response.content)
+            else:
+                st.info("⚠️ Tidak ada LLM API key. Jawaban tidak tersedia.")
