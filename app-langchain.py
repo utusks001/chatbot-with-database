@@ -2,189 +2,212 @@
 
 import streamlit as st
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 import plotly.express as px
+import fitz  # PyMuPDF
+import docx
+from pptx import Presentation
+import pytesseract
+from PIL import Image
+import numpy as np
 import os
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, Docx2txtLoader, UnstructuredPowerPointLoader,
-    UnstructuredImageLoader
-)
-from langchain_community.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# ===============================
-# Helper Functions
-# ===============================
-def detect_data_types(df):
-    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    return categorical_cols, numeric_cols
 
-def df_info_text(df):
-    return f"🔹 Baris: {df.shape[0]}, Kolom: {df.shape[1]}\nKolom: {list(df.columns)}"
+# ========== PAGE CONFIG ==========
+st.set_page_config(page_title="Chatbot Data Analysis + RAG", layout="wide")
 
-def safe_describe(df):
+
+# ========== HELPERS ==========
+def safe_describe(df: pd.DataFrame):
     try:
         return df.describe(include="all").transpose()
-    except Exception:
-        return df.describe().transpose()
+    except Exception as e:
+        return pd.DataFrame({"error": [str(e)]})
 
-def build_vectorstore(files):
-    docs = []
-    for file in files:
-        name = file.name.lower()
-        path = f"temp_{file.name}"
-        with open(path, "wb") as f:
-            f.write(file.read())
 
-        if name.endswith(".pdf"):
-            loader = PyPDFLoader(path)
-        elif name.endswith(".txt"):
-            loader = TextLoader(path)
-        elif name.endswith(".docx"):
-            loader = Docx2txtLoader(path)
-        elif name.endswith(".pptx"):
-            loader = UnstructuredPowerPointLoader(path)
-        elif name.endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif")):
-            loader = UnstructuredImageLoader(path)
-        else:
-            continue
-        docs.extend(loader.load())
-        os.remove(path)
+def detect_date_columns(df: pd.DataFrame):
+    date_cols = []
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            date_cols.append(col)
+        elif "date" in col.lower():
+            try:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+                if df[col].notna().sum() > 0:
+                    date_cols.append(col)
+            except:
+                pass
+    return date_cols
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    texts = splitter.split_documents(docs)
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    store = FAISS.from_documents(texts, embeddings)
-    return store
 
-# ===============================
-# Streamlit Layout
-# ===============================
-st.set_page_config(page_title="📊 Data Analysis + 📚 RAG Chatbot", layout="wide")
+def detect_categorical_columns(df: pd.DataFrame):
+    cat_cols = []
+    for col in df.columns:
+        if df[col].dtype == "object":
+            cat_cols.append(col)
+        elif df[col].nunique() < 20:
+            cat_cols.append(col)
+    return cat_cols
 
-# State management
-if "dfs" not in st.session_state:
-    st.session_state.dfs = {}
-if "df" not in st.session_state:
-    st.session_state.df = None
-if "vectorstore" not in st.session_state:
-    st.session_state.vectorstore = None
-if "chat_analysis" not in st.session_state:
-    st.session_state.chat_analysis = []
-if "chat_rag" not in st.session_state:
-    st.session_state.chat_rag = []
 
-st.title("🤖 Chatbot Data Analysis + RAG Advanced")
+# Extract text from different file types
+def extract_text_from_file(uploaded_file):
+    text = ""
+    filename = uploaded_file.name.lower()
 
-tab1, tab2 = st.tabs(["📊 Data Analysis", "📚 RAG Advanced"])
+    if filename.endswith(".txt"):
+        text = uploaded_file.read().decode("utf-8", errors="ignore")
 
-# ====== TAB 1: Data Analysis ======
+    elif filename.endswith(".pdf"):
+        pdf_doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+        for page in pdf_doc:
+            text += page.get_text()
+
+    elif filename.endswith(".docx"):
+        doc = docx.Document(uploaded_file)
+        for para in doc.paragraphs:
+            text += para.text + "\n"
+
+    elif filename.endswith(".pptx"):
+        prs = Presentation(uploaded_file)
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    text += shape.text + "\n"
+
+    elif filename.endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".gif")):
+        image = Image.open(uploaded_file)
+        text = pytesseract.image_to_string(image)
+
+    return text
+
+
+# Simple RAG using TF-IDF
+def rag_answer(query, documents):
+    if not documents:
+        return "⚠️ Tidak ada dokumen diunggah."
+
+    vectorizer = TfidfVectorizer()
+    doc_vectors = vectorizer.fit_transform(documents)
+    query_vec = vectorizer.transform([query])
+    sims = cosine_similarity(query_vec, doc_vectors).flatten()
+    best_idx = np.argmax(sims)
+    return f"📄 Jawaban berdasarkan dokumen:\n\n{documents[best_idx][:1000]}"
+
+
+# ========== APP ==========
+st.title("📊 Chatbot Data Analysis + 📑 RAG Advanced")
+
+tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
+
+
+# ================= TAB 1: DATA ANALYSIS =================
 with tab1:
-    uploaded_file = st.file_uploader("Upload file Excel/CSV", type=["csv", "xls", "xlsx"], key="data_file")
+    st.header("Upload Dataset (CSV/Excel)")
+    uploaded_file = st.file_uploader("Unggah dataset Anda", type=["csv", "xlsx"])
+
     if uploaded_file:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
-            st.session_state.dfs = {"CSV": df}
         else:
-            xls = pd.ExcelFile(uploaded_file)
-            st.session_state.dfs = {s: pd.read_excel(uploaded_file, sheet_name=s) for s in xls.sheet_names}
+            df = pd.read_excel(uploaded_file)
 
-        st.subheader("📑 Pilih Sheet")
-        sheet_names = list(st.session_state.dfs.keys())
-        selected_sheets = st.multiselect("Sheet Aktif", sheet_names, default=[sheet_names[0]])
+        st.success(f"✅ Dataset berhasil dimuat! {df.shape[0]} baris, {df.shape[1]} kolom")
+        st.dataframe(df.head())
 
-        if selected_sheets:
-            if len(selected_sheets) == 1:
-                df = st.session_state.dfs[selected_sheets[0]]
-            else:
-                df = pd.concat([st.session_state.dfs[s] for s in selected_sheets], ignore_index=True)
-            st.session_state.df = df
+        if "analysis_chat" not in st.session_state:
+            st.session_state.analysis_chat = []
 
-            st.dataframe(df.head(10))
-            cat_cols, num_cols = detect_data_types(df)
-            st.write(f"Kolom Numerik: {num_cols}")
-            st.write(f"Kolom Kategorikal: {cat_cols}")
-            st.text(df_info_text(df))
-            st.write(f"**Data shape:** {df.shape}")
-            st.dataframe(safe_describe(df))
+        st.subheader("💬 Chatbot Data Analysis")
 
-            if not df.select_dtypes(include="number").empty:
-                fig, ax = plt.subplots(figsize=(6, 4))
-                sns.heatmap(df.select_dtypes(include="number").corr(), annot=True, cmap="coolwarm", ax=ax)
-                st.pyplot(fig)
+        for msg in st.session_state.analysis_chat:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-    # Chatbot untuk Data Analysis
-    st.subheader("💬 Chatbot Data Analysis")
-    user_query = st.chat_input("Tanyakan sesuatu tentang data...", key="chat_analysis_input")
-    if user_query:
-        st.session_state.chat_analysis.append(("user", user_query))
-        df = st.session_state.df
-        response = ""
+        user_query = st.chat_input("Tanyakan tentang dataset (contoh: statistik, trend sales, grafik kategori, insight)")
+        if user_query:
+            st.session_state.analysis_chat.append({"role": "user", "content": user_query})
+            response = "⚠️ Saya belum mengerti pertanyaan Anda."
 
-        if df is not None:
-            numeric_cols = df.select_dtypes(include="number").columns.tolist()
-            cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-
+            # === Statistik ===
             if "statistik" in user_query.lower():
-                response = str(safe_describe(df))
-            elif "trend" in user_query.lower() and "sales" in user_query.lower():
+                stats = safe_describe(df)
+                st.dataframe(stats)
+                response = f"📊 Dataset: {df.shape[0]} baris, {df.shape[1]} kolom."
                 if "Sales" in df.columns:
-                    fig = px.line(df, y="Sales", title="Trend Penjualan")
-                    st.plotly_chart(fig)
-                    response = "📈 Grafik tren penjualan ditampilkan."
+                    sales_summary = df["Sales"].describe()
+                    response += (
+                        f"\n- Rata-rata Sales: {sales_summary['mean']:.2f}"
+                        f"\n- Min Sales: {sales_summary['min']:.2f}"
+                        f"\n- Max Sales: {sales_summary['max']:.2f}"
+                    )
+
+            # === Trend ===
+            elif "trend" in user_query.lower():
+                date_cols = detect_date_columns(df)
+                if date_cols and "Sales" in df.columns:
+                    date_col = date_cols[0]
+                    trend_df = df.groupby(date_col)["Sales"].sum().reset_index()
+                    fig = px.line(trend_df, x=date_col, y="Sales", title="📈 Trend Sales")
+                    st.plotly_chart(fig, use_container_width=True)
+                    response = f"📈 Trend Sales ditampilkan berdasarkan kolom `{date_col}`."
                 else:
-                    response = "⚠️ Kolom 'Sales' tidak ditemukan."
-            elif "kategori" in user_query.lower():
-                if cat_cols:
-                    col_choice = st.selectbox("Pilih kolom kategori:", cat_cols, key="cat_choice")
-                    fig = px.bar(df[col_choice].value_counts().reset_index(),
-                                 x="index", y=col_choice, title=f"Distribusi {col_choice}")
-                    st.plotly_chart(fig)
-                    response = f"📊 Grafik kategori untuk {col_choice} ditampilkan."
+                    response = "⚠️ Tidak ada kolom tanggal atau kolom Sales."
+
+            # === Kategori ===
+            elif "kategori" in user_query.lower() or "grafik" in user_query.lower():
+                cat_cols = detect_categorical_columns(df)
+                if cat_cols and "Sales" in df.columns:
+                    col_choice = st.selectbox("Pilih kolom kategori:", cat_cols)
+                    if col_choice:
+                        cat_df = df.groupby(col_choice)["Sales"].sum().reset_index()
+                        fig = px.bar(cat_df, x=col_choice, y="Sales", title=f"📊 Sales per {col_choice}")
+                        st.plotly_chart(fig, use_container_width=True)
+                        response = f"📊 Grafik Sales per kategori `{col_choice}` ditampilkan."
                 else:
-                    response = "⚠️ Tidak ada kolom kategorikal."
-            else:
-                response = "✅ Data siap dianalisis. Silakan minta statistik, tren, atau grafik kategori."
-        else:
-            response = "⚠️ Silakan upload file di tab Data Analysis dulu."
+                    response = "⚠️ Tidak ada kolom kategori cocok."
 
-        st.session_state.chat_analysis.append(("bot", response))
+            # === Insight ===
+            elif "insight" in user_query.lower():
+                response = f"🔎 Insight singkat:\n- Top kategori: {df.select_dtypes(include='object').nunique().idxmax()}\n- Nilai sales total: {df['Sales'].sum() if 'Sales' in df.columns else 'N/A'}"
 
-    for role, msg in st.session_state.chat_analysis:
-        with st.chat_message(role):
-            st.markdown(msg)
+            # === Kesimpulan ===
+            elif "kesimpulan" in user_query.lower() or "ringkas" in user_query.lower():
+                response = f"📌 Kesimpulan dataset: {df.shape[0]} baris, {df.shape[1]} kolom. Data cukup besar untuk analisis lanjutan."
 
-# ====== TAB 2: RAG Advanced ======
+            st.session_state.analysis_chat.append({"role": "assistant", "content": response})
+
+
+# ================= TAB 2: RAG ADVANCED =================
 with tab2:
-    rag_files = st.file_uploader(
-        "Upload dokumen (PDF, TXT, DOCX, PPTX, Gambar)",
-        type=["pdf", "txt", "docx", "pptx", "png", "jpg", "jpeg", "bmp", "gif"],
-        accept_multiple_files=True,
-        key="rag_files"
+    st.header("Upload Dokumen untuk RAG Advanced")
+    rag_file = st.file_uploader(
+        "Unggah dokumen (TXT, PDF, DOCX, PPTX, JPG, PNG, BMP, TIFF, GIF)",
+        type=["txt", "pdf", "docx", "pptx", "jpg", "jpeg", "png", "bmp", "tiff", "gif"],
+        key="rag"
     )
-    if rag_files:
-        st.session_state.vectorstore = build_vectorstore(rag_files)
-        st.success("✅ Vectorstore berhasil dibuat!")
 
-    # Chatbot untuk RAG
-    st.subheader("💬 Chatbot RAG Advanced")
-    user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...", key="chat_rag_input")
-    if user_query:
-        st.session_state.chat_rag.append(("user", user_query))
-        response = ""
+    if rag_file:
+        text_content = extract_text_from_file(rag_file)
+        if "rag_docs" not in st.session_state:
+            st.session_state.rag_docs = []
+        st.session_state.rag_docs.append(text_content)
 
-        if st.session_state.vectorstore:
-            docs = st.session_state.vectorstore.similarity_search(user_query, k=2)
-            response = "\n\n".join([d.page_content for d in docs])
-        else:
-            response = "⚠️ Silakan upload dokumen di tab RAG Advanced dulu."
+        st.success(f"✅ Dokumen '{rag_file.name}' berhasil diunggah & diproses.")
 
-        st.session_state.chat_rag.append(("bot", response))
+        if "rag_chat" not in st.session_state:
+            st.session_state.rag_chat = []
 
-    for role, msg in st.session_state.chat_rag:
-        with st.chat_message(role):
-            st.markdown(msg)
+        st.subheader("💬 Chatbot RAG Advanced")
+
+        for msg in st.session_state.rag_chat:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        rag_query = st.chat_input("Tanyakan isi dokumen (contoh: ringkas dokumen, cari topik penting)", key="rag_chat_input")
+        if rag_query:
+            st.session_state.rag_chat.append({"role": "user", "content": rag_query})
+            response = rag_answer(rag_query, st.session_state.rag_docs)
+            st.session_state.rag_chat.append({"role": "assistant", "content": response})
