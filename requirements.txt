@@ -8,6 +8,7 @@ requests
 pillow
 PyPDF2
 python-docx
+docx2txt
 python-pptx
 sentence-transformers
 faiss-cpu
