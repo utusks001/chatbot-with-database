@@ -26,11 +26,11 @@ pdfminer.six
 pytesseract
 pdfplumber
 PyMuPDF
+pypdf
 scikit-learn
 langchain-google-genai
 google-ai-generativelanguage
 huggingface-hub
-# langchain-embedding-huggingface
 openai==0.28.0
 python-multipart==0.0.6
 unstructured==0.7.12
