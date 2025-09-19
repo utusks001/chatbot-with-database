@@ -1,6 +1,6 @@
 # app-langchain.py
 
-import streamlit as st  
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 from langchain.chains import LLMChain
@@ -14,22 +14,43 @@ from langchain.document_loaders import (
     PyPDFLoader,
     Docx2txtLoader,
     UnstructuredPowerPointLoader,
-    TextLoader,
-    UnstructuredImageLoader,
+    TextLoader
 )
-import tempfile, os
+from langchain.docstore.document import Document
+import tempfile, os, requests
 
-# =====================
-# Init Session State
-# =====================
+# =======================
+# OCR SPACE CONFIG
+# =======================
+OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY") or os.getenv("OCR_SPACE_API_KEY")
+
+def ocr_space_file(file_path):
+    """Scan image file via OCR.Space API"""
+    if not OCR_SPACE_API_KEY:
+        return ""
+    payload = {'apikey': OCR_SPACE_API_KEY, 'language': 'eng'}
+    with open(file_path, 'rb') as f:
+        r = requests.post('https://api.ocr.space/parse/image',
+                          files={file_path: f}, data=payload)
+    result = r.json()
+    if result.get("IsErroredOnProcessing"):
+        return ""
+    text = ""
+    for parsed in result.get("ParsedResults", []):
+        text += parsed.get("ParsedText", "")
+    return text
+
+# =======================
+# Session State
+# =======================
 if "dfs" not in st.session_state:
     st.session_state.dfs = {}
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 
-# ======================
-# LLM SETUP (Gemini + Groq fallback)
-# ======================
+# =======================
+# LLM Setup
+# =======================
 def load_llm():
     try:
         return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
@@ -38,9 +59,9 @@ def load_llm():
 
 llm = load_llm()
 
-# ======================
-# Helpers
-# ======================
+# =======================
+# Helper Functions
+# =======================
 def df_info_text(df: pd.DataFrame) -> str:
     info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
     info += "Kolom:\n" + ", ".join(df.columns[:30])
@@ -61,17 +82,18 @@ def safe_describe(df):
         return pd.DataFrame()
 
 def generate_dataset_insight(df: pd.DataFrame, question: str = None):
-    """Generate insight using LLM, optional question context"""
     stats = safe_describe(df).reset_index().to_string()
     prompt_template = """
     Kamu adalah analis data. Berdasarkan dataset berikut:
     {stats}
     {question_section}
-    Buatkan jawaban atau insight yang relevan secara akurat, jelas dan mudah dipahami.
-    Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+    Buat jawaban atau insight relevan, jelas, ringkas, dan mudah dipahami.
+    Jika jawaban tidak ada, tulis: "Jawaban tidak tersedia dalam konteks yang diberikan"
     """
     question_section = f"Pertanyaan: {question}" if question else ""
-    prompt = ChatPromptTemplate.from_template(prompt_template.format(stats=stats, question_section=question_section))
+    prompt = ChatPromptTemplate.from_template(
+        prompt_template.format(stats=stats, question_section=question_section)
+    )
     chain = prompt | llm
     return chain.invoke({}).content
 
@@ -85,7 +107,8 @@ def load_document(file_path, file_type):
     elif file_type in [".pptx", ".ppt"]:
         return UnstructuredPowerPointLoader(file_path).load()
     elif file_type.lower() in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
-        return UnstructuredImageLoader(file_path).load()
+        text = ocr_space_file(file_path)
+        return [Document(page_content=text)] if text else []
     else:
         return []
 
@@ -104,9 +127,9 @@ def process_rag_files(uploaded_files):
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return FAISS.from_documents(docs_split, embeddings)
 
-# =====================
+# =======================
 # UI Tabs
-# =====================
+# =======================
 st.set_page_config(page_title="🤖📊 Data & Document Chatbot", layout="wide")
 st.title("🤖📊 Chatbot Dashboard : Data Analysis & Advanced RAG")
 
@@ -116,7 +139,6 @@ tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     df = None
-
     if uploaded_file:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
@@ -131,7 +153,6 @@ with tab1:
                     temp["SheetName"] = s
                     df_list.append(temp)
                 df = pd.concat(df_list, ignore_index=True)
-
     if df is not None:
         st.dataframe(df.head(10))
         numeric_cols, categorical_cols, datetime_cols = detect_column_types(df)
@@ -144,13 +165,11 @@ with tab1:
         st.subheader("⚙️ Pilih Kolom untuk Visualisasi")
         x_axis = st.selectbox("Kolom X Axis", df.columns)
         y_axis = st.selectbox("Kolom Y Axis", df.columns)
-
         if x_axis and y_axis:
             x_is_num = x_axis in numeric_cols or x_axis in datetime_cols
             y_is_num = y_axis in numeric_cols
             x_is_cat = x_axis in categorical_cols
             y_is_cat = y_axis in categorical_cols
-
             fig = None
             if x_is_num and y_is_num:
                 fig = px.scatter(df, x=x_axis, y=y_axis, title=f"📈 Scatter {y_axis} vs {x_axis}")
@@ -163,11 +182,9 @@ with tab1:
             elif x_is_cat and y_is_cat:
                 crosstab = pd.crosstab(df[x_axis], df[y_axis])
                 fig = px.imshow(crosstab, title=f"🔢 Frekuensi {x_axis} vs {y_axis}")
-
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-        # Chatbot Data Analysis (jawab semua pertanyaan dataset relevan)
         st.subheader("💬 Chatbot Data Analysis")
         q = st.text_input("Tanyakan sesuatu tentang dataset")
         if q:
@@ -191,8 +208,8 @@ with tab2:
         docs = retriever.get_relevant_documents(q2)
         context = "\n".join([d.page_content for d in docs[:3]])
         prompt = ChatPromptTemplate.from_template("""
-        Jawab pertanyaan berikut secara akurat, jelas dan ringkas berdasarkan dokumen konteks.
-        Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+        Jawab pertanyaan berikut secara akurat, jelas, dan ringkas berdasarkan dokumen konteks.
+        Jika jawaban tidak ada, tulis: "Jawaban tidak tersedia dalam konteks yang diberikan"
         Pertanyaan: {q}
         Konteks: {context}
         Jawaban ringkas:
