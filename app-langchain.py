@@ -3,20 +3,22 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import tempfile, os, requests
+import os, tempfile, requests
 
 from langchain.chains import LLMChain
+from langchain.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
-from langchain.prompts import ChatPromptTemplate
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader, TextLoader
 from langchain.schema import Document
 
+from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader, TextLoader
+
 # =====================
-# Init Session State
+# Session State Init
 # =====================
 if "dfs" not in st.session_state:
     st.session_state.dfs = {}
@@ -25,9 +27,9 @@ if "vectorstore" not in st.session_state:
 if "uploaded_rag_files" not in st.session_state:
     st.session_state.uploaded_rag_files = []
 
-# ======================
-# LLM SETUP (Gemini + Groq fallback)
-# ======================
+# =====================
+# LLM Setup
+# =====================
 def load_llm():
     try:
         return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
@@ -36,9 +38,9 @@ def load_llm():
 
 llm = load_llm()
 
-# ======================
-# Helpers
-# ======================
+# =====================
+# Helpers Data Analysis
+# =====================
 def df_info_text(df: pd.DataFrame) -> str:
     info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
     info += "Kolom:\n" + ", ".join(df.columns[:30])
@@ -62,71 +64,78 @@ def generate_dataset_insight(df: pd.DataFrame, question: str = None):
     stats = safe_describe(df).reset_index().to_string()
     question_section = f"Pertanyaan: {question}" if question else ""
     prompt_template = f"""
-    Kamu adalah analis data. Berdasarkan dataset berikut:
+    Kamu adalah analis data profesional.
+    Berdasarkan dataset berikut:
     {stats}
     {question_section}
-    Buatkan jawaban atau insight yang relevan secara akurat, jelas dan mudah dipahami.
-    Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+    Jawaban harus relevan, akurat, jelas, dan mudah dipahami.
+    Jika jawaban tidak tersedia, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan."
     """
     prompt = ChatPromptTemplate.from_template(prompt_template)
     chain = prompt | llm
     return chain.invoke({}).content
 
-def ocr_image_via_ocr_space(file_path, api_key):
+# =====================
+# RAG File Loader
+# =====================
+OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY")  # harus ada di .env
+
+def load_image_ocr(file_path):
     with open(file_path, "rb") as f:
         r = requests.post(
             "https://api.ocr.space/parse/image",
-            files={"filename": f},
-            data={"apikey": api_key, "OCREngine": 2, "isOverlayRequired": False}
+            files={file_path: f},
+            data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
         )
-    result = r.json()
-    parsed_text = ""
     try:
-        parsed_text = " ".join([item["ParsedText"] for item in result["ParsedResults"]])
-    except Exception:
+        result = r.json()
         parsed_text = ""
-    return parsed_text
+        for entry in result.get("ParsedResults", []):
+            parsed_text += entry.get("ParsedText", "") + "\n"
+        return parsed_text.strip()
+    except:
+        return ""
 
-def load_document(file_path, file_type, ocr_api_key=None):
-    docs = []
+def load_document(file_path, file_type):
+    file_type = file_type.lower()
     if file_type == ".pdf":
-        for d in PyPDFLoader(file_path).load():
-            docs.append(Document(page_content=d.page_content, metadata={"source": os.path.basename(file_path)}))
+        return PyPDFLoader(file_path).load()
     elif file_type == ".txt":
-        for d in TextLoader(file_path).load():
-            docs.append(Document(page_content=d.page_content, metadata={"source": os.path.basename(file_path)}))
+        return TextLoader(file_path).load()
     elif file_type == ".docx":
-        for d in Docx2txtLoader(file_path).load():
-            docs.append(Document(page_content=d.page_content, metadata={"source": os.path.basename(file_path)}))
+        return Docx2txtLoader(file_path).load()
     elif file_type in [".pptx", ".ppt"]:
-        for d in UnstructuredPowerPointLoader(file_path).load():
-            docs.append(Document(page_content=d.page_content, metadata={"source": os.path.basename(file_path)}))
-    elif file_type.lower() in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
-        if ocr_api_key:
-            text = ocr_image_via_ocr_space(file_path, ocr_api_key)
-            docs.append(Document(page_content=text, metadata={"source": os.path.basename(file_path)}))
-    return docs
+        return UnstructuredPowerPointLoader(file_path).load()
+    elif file_type in [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".jfif"]:
+        text = load_image_ocr(file_path)
+        if text.strip() == "":
+            text = "[Tidak ada teks berhasil diekstrak dari gambar]"
+        return [Document(page_content=text, metadata={"source": os.path.basename(file_path)})]
+    else:
+        return []
 
-def process_rag_files(uploaded_files, ocr_api_key):
-    all_docs = []
+def process_rag_files(uploaded_files):
+    docs = []
     for uploaded_file in uploaded_files:
-        suffix = os.path.splitext(uploaded_file.name)[1].lower()
+        suffix = os.path.splitext(uploaded_file.name)[1]
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(uploaded_file.read())
             tmp_path = tmp.name
-        all_docs.extend(load_document(tmp_path, suffix, ocr_api_key))
+        docs.extend(load_document(tmp_path, suffix))
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    return splitter.split_documents(all_docs)
+    docs_split = splitter.split_documents(docs)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return FAISS.from_documents(docs_split, embeddings)
 
 # =====================
-# UI Tabs
+# Streamlit UI
 # =====================
 st.set_page_config(page_title="🤖📊 Data & Document Chatbot", layout="wide")
-st.title("🤖📊 Chatbot Dashboard : Data Analysis & Advanced RAG")
+st.title("🤖📊 Chatbot Dashboard : Data Analysis & RAG")
 
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
-# ====== MODE 1: Data Analysis ======
+# ----- Data Analysis -----
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     df = None
@@ -186,40 +195,41 @@ with tab1:
         if q:
             st.write(generate_dataset_insight(df, question=q))
 
-# ====== MODE 2: RAG Advanced ======
+# ----- RAG Advanced -----
 with tab2:
     uploaded_files = st.file_uploader(
-        "Upload dokumen (PDF, DOCX, PPTX, TXT, JPG, PNG, BMP, GIF)",
-        type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif"],
+        "Upload dokumen PDF/DOCX/PPTX/TXT/Gambar (multi-file)",
+        type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif","jfif"],
         accept_multiple_files=True
     )
-    ocr_api_key = st.secrets.get("OCR_SPACE_API_KEY", "")
-
     if uploaded_files:
         st.session_state.uploaded_rag_files = uploaded_files
-        st.write("📄 File terupload:")
+        st.markdown("**File terupload:**")
         for f in uploaded_files:
-            st.write(f"- {f.name}")
+            st.write(f"• {f.name}")
 
-        if st.button("🚀 Build Vector Store"):
-            with st.spinner("📦 Memproses file dan membuat vector store..."):
-                docs = process_rag_files(st.session_state.uploaded_rag_files, ocr_api_key)
-                embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-                st.session_state.vectorstore = FAISS.from_documents(docs, embeddings)
-                st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(st.session_state.uploaded_rag_files)} | Total chunk: {len(docs)}")
+    if st.button("🚀 Build Vector Store") and st.session_state.uploaded_rag_files:
+        with st.spinner("Memproses dokumen dan membuat vector store..."):
+            vs = process_rag_files(st.session_state.uploaded_rag_files)
+            st.session_state.vectorstore = vs
+            st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(st.session_state.uploaded_rag_files)} | Total chunk: {len(vs.docstore._dict)}")
 
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen")
     if q2 and st.session_state.vectorstore:
         retriever = st.session_state.vectorstore.as_retriever()
         docs = retriever.get_relevant_documents(q2)
-        context = "\n".join([d.page_content for d in docs[:3]])
-        prompt = ChatPromptTemplate.from_template(f"""
-        Jawab pertanyaan berikut secara akurat, jelas dan ringkas berdasarkan dokumen konteks.
-        Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-        Pertanyaan: {{q}}
-        Konteks: {{context}}
-        Jawaban ringkas:
-        """)
-        chain = prompt | llm
-        st.write(chain.invoke({"q": q2, "context": context}).content)
+        if docs:
+            context = "\n".join([d.page_content for d in docs])
+            prompt = ChatPromptTemplate.from_template(f"""
+            Jawab pertanyaan berikut secara akurat, jelas, dan ringkas berdasarkan dokumen.
+            Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan."
+            Pertanyaan: {{q}}
+            Konteks: {{context}}
+            Jawaban ringkas:
+            """)
+            chain = prompt | llm
+            st.write(chain.invoke({"q": q2, "context": context}).content)
+        else:
+            st.warning("Tidak ada teks relevan berhasil diekstrak dari dokumen.")
+
