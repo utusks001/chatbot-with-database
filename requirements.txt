@@ -13,7 +13,7 @@ sentence-transformers
 faiss-cpu
 transformers
 pathlib
-torch
+# torch
 streamlit
 matplotlib
 seaborn
