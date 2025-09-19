@@ -23,6 +23,7 @@ unstructured
 pdfminer.six
 pytesseract
 pdfplumber
+PyMuPDF
 scikit-learn
 langchain-google-genai
 google-ai-generativelanguage
