@@ -19,6 +19,8 @@ seaborn
 pandas
 numpy
 plotly
+unstructured
+pdfminer.six
 pytesseract
 pdfplumber
 scikit-learn
