@@ -7,13 +7,18 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import tempfile, os
 
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader, UnstructuredPowerPointLoader, UnstructuredImageLoader
+from langchain_community.document_loaders import (
+    PyPDFLoader, Docx2txtLoader, TextLoader,
+    UnstructuredPowerPointLoader, UnstructuredImageLoader
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.llms import HuggingFaceHub
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
+
+from transformers import pipeline
+from langchain_community.llms import HuggingFacePipeline
 
 # ====== INIT ======
 st.set_page_config(page_title="📊 Data Analysis + 📚 RAG Assistant", layout="wide")
@@ -25,11 +30,9 @@ if "dfs" not in st.session_state:
 if "rag_qa" not in st.session_state:
     st.session_state.rag_qa = None
 
-# HuggingFace LLM (fallback model ringan)
-llm = HuggingFaceHub(
-    repo_id="google/flan-t5-large",
-    model_kwargs={"temperature":0.1, "max_length":512}
-)
+# HuggingFace pipeline (lebih stabil daripada HuggingFaceHub)
+generator = pipeline("text2text-generation", model="google/flan-t5-large")
+llm = HuggingFacePipeline(pipeline=generator)
 
 # ====== UTILS ======
 def safe_describe(df):
@@ -52,9 +55,8 @@ def df_info_text(df):
     return "\n".join(buf)
 
 def generate_insight_with_llm(df, x_axis, y_axis):
-    """Ambil subset data, kirim ke LLM untuk insight naratif"""
     try:
-        subset = df[[x_axis, y_axis]].dropna().head(50)  # hanya sample biar ringan
+        subset = df[[x_axis, y_axis]].dropna().head(50)
         prompt = PromptTemplate.from_template(
             "Berikan insight ringkas dalam bahasa alami dari data berikut (format tabel):\n\n{data}\n\n"
             "Fokus pada tren, pola, anomali, dan kesimpulan utama."
@@ -67,7 +69,7 @@ def generate_insight_with_llm(df, x_axis, y_axis):
 # ====== LAYOUT ======
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📚 RAG Advanced"])
 
-# ====== MODE 1: DATA ANALYSIS ======
+# ====== MODE 1: Data Analysis ======
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     if uploaded_file:
@@ -111,7 +113,6 @@ with tab1:
                 sns.heatmap(df.select_dtypes(include="number").corr(), annot=True, cmap="coolwarm", ax=ax)
                 st.pyplot(fig)
 
-            # Pilihan sumbu untuk tren
             st.subheader("📈 Buat Grafik Tren")
             x_axis = st.selectbox("Pilih kolom X (axis)", df.columns, index=0)
             y_axis = st.selectbox("Pilih kolom Y (axis)", df.columns, index=1)
@@ -124,11 +125,10 @@ with tab1:
                     fig = px.line(trend_df, x=x_axis, y=y_axis, title=f"Grafik tren {y_axis} vs {x_axis}")
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # Insight otomatis dengan LLM
                     insight = generate_insight_with_llm(trend_df, x_axis, y_axis)
                     st.success(f"**Insight:** {insight}")
 
-# ====== MODE 2: RAG ADVANCED ======
+# ====== MODE 2: RAG Advanced ======
 with tab2:
     rag_files = st.file_uploader(
         "Upload dokumen (PDF, TXT, DOCX, PPTX, Image)",
@@ -170,31 +170,26 @@ if user_query:
     st.session_state.chat_history.append(("user", user_query))
 
     response = "⚠️ Tidak ada konteks."
-    # Jika tab Data Analysis aktif
     if st.session_state.get("uploaded_file") and df is not None and tab1:
-        # Jawaban berbasis dataset
         if "statistik" in user_query.lower():
             response = str(safe_describe(df))
         elif "tren" in user_query.lower():
-            response = "📈 Gunakan fitur grafik tren di atas untuk melihat pola visual."
+            response = "📈 Gunakan fitur grafik tren di atas."
         elif "kategori" in user_query.lower():
             cats, _ = detect_data_types(df)
-            response = f"Kolom kategorikal yang tersedia: {cats}"
+            response = f"Kolom kategorikal: {cats}"
         else:
-            # Pertanyaan umum dataset → kirim ringkasan ke LLM
             sample = df.head(50).to_string()
             prompt = PromptTemplate.from_template(
                 "Jawab pertanyaan berikut berdasarkan dataset:\n\nPertanyaan: {q}\n\nData:\n{data}"
             )
             response = llm(prompt.format(q=user_query, data=sample))
 
-    # Jika tab RAG Advanced aktif
     elif st.session_state.get("rag_qa"):
         response = st.session_state.rag_qa.run(user_query)
 
     st.session_state.chat_history.append(("assistant", response))
 
-# Tampilkan chat history
 for role, msg in st.session_state.chat_history:
     with st.chat_message(role):
         st.markdown(msg)
