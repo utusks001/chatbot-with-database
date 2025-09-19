@@ -1,6 +1,6 @@
 # app-langchain.py
 
-import streamlit as st  
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 from langchain.chains import LLMChain
@@ -9,6 +9,7 @@ from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.document_loaders import (
     PyPDFLoader,
@@ -16,6 +17,7 @@ from langchain.document_loaders import (
     UnstructuredPowerPointLoader,
     TextLoader,
 )
+from langchain.schema import Document
 from PIL import Image
 import tempfile, os
 
@@ -42,6 +44,7 @@ llm = load_llm()
 # Helpers
 # ======================
 def df_info_text(df: pd.DataFrame) -> str:
+    """Ringkasan dataset sederhana"""
     info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
     info += "Kolom:\n" + ", ".join(df.columns[:30])
     if df.shape[1] > 30:
@@ -74,36 +77,40 @@ def generate_dataset_insight(df: pd.DataFrame):
     chain = prompt | llm
     return chain.invoke({"stats": stats}).content
 
+# ======================
+# Document Loader
+# ======================
 def load_document(file_path, file_type):
     file_type = file_type.lower()
+    docs = []
     if file_type == ".pdf":
-        return PyPDFLoader(file_path).load()
+        docs.extend(PyPDFLoader(file_path).load())
     elif file_type == ".txt":
-        return TextLoader(file_path).load()
+        docs.extend(TextLoader(file_path).load())
     elif file_type == ".docx":
-        return Docx2txtLoader(file_path).load()
+        docs.extend(Docx2txtLoader(file_path).load())
     elif file_type in [".pptx", ".ppt"]:
-        return UnstructuredPowerPointLoader(file_path).load()
+        docs.extend(UnstructuredPowerPointLoader(file_path).load())
     elif file_type in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
         try:
             img = Image.open(file_path)
-            return [{"page_content": f"[Gambar: {os.path.basename(file_path)}] Ukuran: {img.size}"}]
+            content = f"[Gambar: {os.path.basename(file_path)}] Ukuran: {img.size}"
         except Exception:
-            return [{"page_content": f"[Gagal membaca gambar: {os.path.basename(file_path)}]"}]
-    else:
-        return []
+            content = f"[Gagal membaca gambar: {os.path.basename(file_path)}]"
+        docs.append(Document(page_content=content))
+    return docs
 
 def process_rag_files(uploaded_files):
-    docs = []
+    all_docs = []
     for uploaded_file in uploaded_files:
         suffix = os.path.splitext(uploaded_file.name)[1].lower()
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(uploaded_file.read())
             tmp_path = tmp.name
-        docs.extend(load_document(tmp_path, suffix))
+        all_docs.extend(load_document(tmp_path, suffix))
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    docs_split = splitter.split_documents(docs)
+    docs_split = splitter.split_documents(all_docs)
 
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return FAISS.from_documents(docs_split, embeddings)
@@ -111,8 +118,12 @@ def process_rag_files(uploaded_files):
 # =====================
 # UI Tabs
 # =====================
-st.set_page_config(page_title="📊 Data & Document Chatbot", layout="wide")
 st.title("🤖📊 Chatbot Dashboard : Data Analysis & Advanced RAG")
+st.set_page_config(
+    page_title="Chatbot Dashboard & Advanced RAG",
+    page_icon="🤖📊",
+    layout="wide"
+)
 
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
@@ -183,9 +194,11 @@ with tab1:
 
 # ====== MODE 2: RAG Advanced ======
 with tab2:
-    uploaded_files = st.file_uploader("Upload dokumen (PDF, DOCX, PPTX, TXT, JPG, PNG, BMP, GIF)", 
-                                      type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif"], 
-                                      accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "Upload dokumen (PDF, DOCX, PPTX, TXT, JPG, PNG, dsb)",
+        type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif"],
+        accept_multiple_files=True
+    )
     if uploaded_files:
         st.session_state.vectorstore = process_rag_files(uploaded_files)
         st.success("✅ Dokumen berhasil diproses!")
