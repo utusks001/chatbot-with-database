@@ -1,6 +1,6 @@
 # app-langchain.py
 
-import streamlit as st   
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 from langchain.chains import LLMChain
@@ -15,9 +15,9 @@ from langchain.document_loaders import (
     Docx2txtLoader,
     UnstructuredPowerPointLoader,
     TextLoader,
-    UnstructuredImageLoader,
 )
-import tempfile, os
+from langchain.schema import Document
+import tempfile, os, requests
 
 # =====================
 # Init Session State
@@ -26,6 +26,8 @@ if "dfs" not in st.session_state:
     st.session_state.dfs = {}
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
+
+OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY")
 
 # ======================
 # LLM SETUP (Gemini + Groq fallback)
@@ -61,20 +63,41 @@ def safe_describe(df):
         return pd.DataFrame()
 
 def generate_dataset_insight(df: pd.DataFrame, question: str = None):
-    """Generate insight using LLM, optional question context"""
     stats = safe_describe(df).reset_index().to_string()
-    prompt_template = """
+    question_section = f"Pertanyaan: {question}" if question else ""
+    prompt_template = f"""
     Kamu adalah analis data. Berdasarkan dataset berikut:
     {stats}
     {question_section}
     Buatkan jawaban atau insight yang relevan secara akurat, jelas dan mudah dipahami.
     Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
     """
-    question_section = f"Pertanyaan: {question}" if question else ""
-    prompt = ChatPromptTemplate.from_template(prompt_template.format(stats=stats, question_section=question_section))
+    prompt = ChatPromptTemplate.from_template(prompt_template)
     chain = prompt | llm
     return chain.invoke({}).content
 
+# ======================
+# OCR for images
+# ======================
+def ocr_image(file_path):
+    """Ekstrak teks dari gambar via OCR.Space"""
+    with open(file_path, "rb") as f:
+        r = requests.post(
+            "https://api.ocr.space/parse/image",
+            files={"file": f},
+            data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
+        )
+    result = r.json()
+    text = ""
+    try:
+        text = result['ParsedResults'][0]['ParsedText']
+    except:
+        text = ""
+    return text
+
+# ======================
+# Document loader
+# ======================
 def load_document(file_path, file_type):
     if file_type == ".pdf":
         return PyPDFLoader(file_path).load()
@@ -85,7 +108,8 @@ def load_document(file_path, file_type):
     elif file_type in [".pptx", ".ppt"]:
         return UnstructuredPowerPointLoader(file_path).load()
     elif file_type.lower() in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
-        return UnstructuredImageLoader(file_path).load()
+        text = ocr_image(file_path)
+        return [Document(page_content=text)]
     else:
         return []
 
@@ -97,10 +121,8 @@ def process_rag_files(uploaded_files):
             tmp.write(uploaded_file.read())
             tmp_path = tmp.name
         docs.extend(load_document(tmp_path, suffix))
-
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     docs_split = splitter.split_documents(docs)
-
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return FAISS.from_documents(docs_split, embeddings)
 
@@ -116,7 +138,6 @@ tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     df = None
-
     if uploaded_file:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
@@ -131,7 +152,6 @@ with tab1:
                     temp["SheetName"] = s
                     df_list.append(temp)
                 df = pd.concat(df_list, ignore_index=True)
-
     if df is not None:
         st.dataframe(df.head(10))
         numeric_cols, categorical_cols, datetime_cols = detect_column_types(df)
@@ -167,7 +187,6 @@ with tab1:
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-        # Chatbot Data Analysis
         st.subheader("💬 Chatbot Data Analysis")
         q = st.text_input("Tanyakan sesuatu tentang dataset")
         if q:
@@ -182,15 +201,13 @@ with tab2:
     )
 
     if uploaded_files:
-        st.write("📂 File yang diupload:")
+        st.write("📄 File yang diupload:")
         for f in uploaded_files:
             st.write(f"- {f.name}")
 
-        # Tombol konfirmasi sebelum memproses
-        if st.button("✅ Proses Semua File ke Vectorstore"):
-            with st.spinner("Memproses dokumen..."):
-                st.session_state.vectorstore = process_rag_files(uploaded_files)
-            st.success("🎉 Semua dokumen berhasil diproses dan siap digunakan oleh Chatbot RAG!")
+        if st.button("Proses Semua File ke Vectorstore"):
+            st.session_state.vectorstore = process_rag_files(uploaded_files)
+            st.success("✅ Semua file berhasil diproses dan siap digunakan oleh Chatbot.")
 
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen")
@@ -199,11 +216,6 @@ with tab2:
         docs = retriever.get_relevant_documents(q2)
         context = "\n".join([d.page_content for d in docs[:3]])
         prompt = ChatPromptTemplate.from_template("""
-        Jawab pertanyaan berikut secara akurat, jelas, dan ringkas berdasarkan dokumen konteks.
-        Jika jawaban tidak ada, tulis: "Jawaban tidak tersedia dalam konteks yang diberikan"
+        Jawab pertanyaan berikut secara akurat, jelas dan ringkas berdasarkan dokumen konteks.
+        Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
         Pertanyaan: {q}
-        Konteks: {context}
-        Jawaban ringkas:
-        """)
-        chain = prompt | llm
-        st.write(chain.invoke({"q": q2, "context": context}).content)
