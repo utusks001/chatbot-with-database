@@ -3,6 +3,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import tempfile, os, requests
+
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
@@ -16,22 +18,20 @@ from langchain.document_loaders import (
     UnstructuredPowerPointLoader,
     TextLoader,
 )
-from langchain_community.document_loaders import OnlineOCRSpaceLoader
-import tempfile, os
 
 # =====================
-# Init Session State
+# Session State
 # =====================
 if "dfs" not in st.session_state:
     st.session_state.dfs = {}
-if "vector_store" not in st.session_state:
-    st.session_state.vector_store = None
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
 if "uploaded_rag_files" not in st.session_state:
     st.session_state.uploaded_rag_files = []
 
-# ======================
-# LLM SETUP (Gemini + Groq fallback)
-# ======================
+# =====================
+# LLM Setup
+# =====================
 def load_llm():
     try:
         return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
@@ -40,9 +40,9 @@ def load_llm():
 
 llm = load_llm()
 
-# ======================
-# Helpers
-# ======================
+# =====================
+# Helpers: Data Analysis
+# =====================
 def df_info_text(df: pd.DataFrame) -> str:
     info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
     info += "Kolom:\n" + ", ".join(df.columns[:30])
@@ -64,22 +64,44 @@ def safe_describe(df):
 
 def generate_dataset_insight(df: pd.DataFrame, question: str = None):
     stats = safe_describe(df).reset_index().to_string()
+    prompt_template = """
+Kamu adalah analis data. Berdasarkan dataset berikut:
+{stats}
+{question_section}
+Buatkan jawaban atau insight yang relevan secara akurat, jelas dan mudah dipahami.
+Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+"""
     question_section = f"Pertanyaan: {question}" if question else ""
-    prompt_template = f"""
-    Kamu adalah analis data. Berdasarkan dataset berikut:
-    {stats}
-    {question_section}
-    Buatkan jawaban atau insight yang relevan secara akurat, jelas dan mudah dipahami.
-    Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-    """
-    prompt = ChatPromptTemplate.from_template(prompt_template)
+    prompt = ChatPromptTemplate.from_template(
+        prompt_template.format(stats=stats, question_section=question_section)
+    )
     chain = prompt | llm
     return chain.invoke({}).content
 
-# ======================
-# Document Loader / RAG
-# ======================
-def load_document(file_path, file_type, ocr_api_key=None):
+# =====================
+# Helpers: RAG + OCR
+# =====================
+OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
+
+def ocr_space_image(file_path):
+    """OCR image via OCR.Space API"""
+    if not OCR_SPACE_API_KEY:
+        st.error("OCR_SPACE_API_KEY belum diset di .env / Streamlit secrets")
+        return ""
+    with open(file_path, "rb") as f:
+        r = requests.post(
+            "https://api.ocr.space/parse/image",
+            files={"filename": f},
+            data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
+        )
+    try:
+        result = r.json()
+        parsed_text = result.get("ParsedResults", [{}])[0].get("ParsedText", "")
+        return parsed_text
+    except Exception:
+        return ""
+
+def load_document(file_path, file_type):
     file_type = file_type.lower()
     if file_type == ".pdf":
         return PyPDFLoader(file_path).load()
@@ -90,23 +112,22 @@ def load_document(file_path, file_type, ocr_api_key=None):
     elif file_type in [".pptx", ".ppt"]:
         return UnstructuredPowerPointLoader(file_path).load()
     elif file_type in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
-        if ocr_api_key:
-            return OnlineOCRSpaceLoader(file_path, api_key=ocr_api_key).load()
-        else:
-            st.warning(f"OCR API key tidak tersedia, gambar {os.path.basename(file_path)} tidak bisa diproses.")
-            return []
+        text = ocr_space_image(file_path)
+        return [{"page_content": text}] if text else []
     else:
         return []
 
 def process_rag_files(uploaded_files):
-    ocr_api_key = st.secrets.get("OCR_SPACE_API_KEY", None)
     docs = []
     for uploaded_file in uploaded_files:
         suffix = os.path.splitext(uploaded_file.name)[1].lower()
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(uploaded_file.read())
             tmp_path = tmp.name
-        docs.extend(load_document(tmp_path, suffix, ocr_api_key=ocr_api_key))
+        docs.extend(load_document(tmp_path, suffix))
+
+    if not docs:
+        return None
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     docs_split = splitter.split_documents(docs)
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -120,7 +141,9 @@ st.title("🤖📊 Chatbot Dashboard : Data Analysis & Advanced RAG")
 
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
-# ====== Data Analysis ======
+# ---------------------
+# Tab 1: Data Analysis
+# ---------------------
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     df = None
@@ -180,7 +203,9 @@ with tab1:
         if q:
             st.write(generate_dataset_insight(df, question=q))
 
-# ====== RAG Advanced ======
+# ---------------------
+# Tab 2: RAG Advanced
+# ---------------------
 with tab2:
     uploaded_files = st.file_uploader(
         "Upload dokumen (PDF, DOCX, PPTX, TXT, JPG, PNG, BMP, GIF) — boleh banyak",
@@ -190,30 +215,22 @@ with tab2:
 
     if uploaded_files:
         st.session_state.uploaded_rag_files = uploaded_files
-        st.markdown("**File yang di-upload:**")
+        st.write("**File yang diupload:**")
         st.write([f.name for f in uploaded_files])
 
-    if st.button("🚀 Proses Semua File ke Vectorstore") and st.session_state.uploaded_rag_files:
-        with st.spinner("📦 Memproses file dan membangun vector store..."):
-            vs = process_rag_files(st.session_state.uploaded_rag_files)
-            st.session_state.vector_store = vs
-            total_chunks = len(vs.docstore._dict)
-            st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(st.session_state.uploaded_rag_files)} | Total chunk: {total_chunks}")
+        if st.button("🚀 Build Vector Store"):
+            with st.spinner("📦 Memproses file dan membuat vector store..."):
+                vs = process_rag_files(uploaded_files)
+                if vs:
+                    st.session_state.vectorstore = vs
+                    st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(uploaded_files)}")
+                else:
+                    st.error("❌ Tidak ada teks valid berhasil diekstrak. Periksa file.")
 
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen")
-    if q2 and st.session_state.vector_store:
-        retriever = st.session_state.vector_store.as_retriever()
+    if q2 and st.session_state.vectorstore:
+        retriever = st.session_state.vectorstore.as_retriever()
         docs = retriever.get_relevant_documents(q2)
         context = "\n".join([d.page_content for d in docs[:3]])
-        prompt = ChatPromptTemplate.from_template(
-            """
-            Jawab pertanyaan berikut secara akurat, jelas dan ringkas berdasarkan dokumen konteks.
-            Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-            Pertanyaan: {q}
-            Konteks: {context}
-            Jawaban ringkas:
-            """
-        )
-        chain = prompt | llm
-        st.write(chain.invoke({"q": q2, "context": context}).content)
+        prompt = Chat
