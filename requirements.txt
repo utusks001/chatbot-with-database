@@ -30,4 +30,4 @@ scikit-learn
 langchain-google-genai
 google-ai-generativelanguage
 huggingface-hub
-langchain-embedding-huggingface
+# langchain-embedding-huggingface
