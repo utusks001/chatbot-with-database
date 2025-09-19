@@ -22,6 +22,12 @@ from langchain.document_loaders import (
 )
 import tempfile, os
 
+st.set_page_config(
+    page_title="Chatbot Data Analysis dan RAG Advanced",
+    page_icon="🤖",
+    layout="wide"
+)
+
 # =====================
 # Init Session State
 # =====================
