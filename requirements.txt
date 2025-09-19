@@ -1,5 +1,7 @@
-langchain-community
 openpyxl
+langchain
+langchain-community
+langchain-groq
 python-dotenv
 toml
 requests
@@ -7,7 +9,6 @@ pillow
 PyPDF2
 python-docx
 python-pptx
-langchain
 sentence-transformers
 faiss-cpu
 transformers
