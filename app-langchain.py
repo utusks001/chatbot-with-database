@@ -111,14 +111,15 @@ st.set_page_config(page_title="Data & Document RAG Chatbot", layout="wide")
 st.title("📊🤖 Chatbot Analisis Data & Dokumen (RAG + HF)")
 
 # ====== Session State Init ======
-for key in ["dfs", "uploaded_file", "uploaded_files", "chat_history_data", "chat_history_rag", "vectorstore"]:
+for key in ["dfs", "uploaded_file", "uploaded_files", "chat_history_data", "chat_history_rag", "vectorstore", "active_tab"]:
     if key not in st.session_state:
         st.session_state[key] = [] if "chat_history" in key else None
 
+# ====== Tabs ======
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📑 RAG Advanced"])
 
-# ====== MODE 1: Data Analysis ======
 with tab1:
+    st.session_state.active_tab = "Data Analysis"
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     if uploaded_file:
         st.session_state.uploaded_file = uploaded_file
@@ -161,8 +162,8 @@ with tab1:
                 sns.heatmap(df.select_dtypes(include="number").corr(), annot=True, cmap="coolwarm", ax=ax)
                 st.pyplot(fig)
 
-# ====== MODE 2: RAG Advanced ======
 with tab2:
+    st.session_state.active_tab = "RAG Advanced"
     uploaded_files = st.file_uploader(
         "Upload dokumen (PDF, TXT, DOCX, PPTX, CSV, XLSX, gambar) → bisa multi-file",
         type=["pdf", "txt", "docx", "pptx", "csv", "xls", "xlsx", "png", "jpg", "jpeg", "bmp"],
@@ -189,14 +190,12 @@ def get_llm():
     except:
         return None
 
-# ====== CHATBOT SELALU MUNCUL ======
-st.markdown("---")
-mode = st.radio("💬 Pilih Mode Chatbot:", ["Data Analysis", "RAG Advanced"], horizontal=True)
+# ====== CHATBOT ROOT-LEVEL ======
+user_query = st.chat_input("💬 Tanyakan sesuatu...")
 
-if mode == "Data Analysis":
+if st.session_state.active_tab == "Data Analysis":
     if "chat_history_data" not in st.session_state:
         st.session_state.chat_history_data = []
-    user_query = st.chat_input("Tanyakan sesuatu tentang data...")
     if user_query:
         st.chat_message("user").markdown(user_query)
         st.session_state.chat_history_data.append(("user", user_query))
@@ -219,10 +218,9 @@ if mode == "Data Analysis":
     for role, msg in st.session_state.chat_history_data:
         st.chat_message(role).markdown(msg)
 
-elif mode == "RAG Advanced":
+elif st.session_state.active_tab == "RAG Advanced":
     if "chat_history_rag" not in st.session_state:
         st.session_state.chat_history_rag = []
-    user_query = st.chat_input("Tanyakan sesuatu tentang dokumen...")
     if user_query:
         st.chat_message("user").markdown(user_query)
         st.session_state.chat_history_rag.append(("user", user_query))
