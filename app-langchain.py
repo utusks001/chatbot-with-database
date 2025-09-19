@@ -1,6 +1,6 @@
 # app-langchain.py
 
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import plotly.express as px
 import matplotlib.pyplot as plt
@@ -9,7 +9,6 @@ from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
-from langchain.prompts import PromptTemplate
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
@@ -23,7 +22,6 @@ from langchain.document_loaders import (
 )
 import tempfile, os
 
-        
 # =====================
 # Init Session State
 # =====================
@@ -44,7 +42,7 @@ def load_llm():
 llm = load_llm()
 
 # ======================
-# Helpers  Utility Functions
+# Helpers
 # ======================
 def df_info_text(df: pd.DataFrame) -> str:
     """Ringkasan dataset sederhana"""
@@ -53,23 +51,18 @@ def df_info_text(df: pd.DataFrame) -> str:
     if df.shape[1] > 30:
         info += " ..."
     return info
-    
-def detect_data_types(df):
-    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-    num_cols = df.select_dtypes(include="number").columns.tolist()
-    return cat_cols, num_cols
-
-def safe_describe(df):
-    try:
-        return df.describe(include="all")
-    except Exception:
-        return pd.DataFrame()
 
 def detect_column_types(df: pd.DataFrame):
     numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
     categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
     datetime_cols = df.select_dtypes(include=["datetime64[ns]"]).columns.tolist()
     return numeric_cols, categorical_cols, datetime_cols
+
+def safe_describe(df):
+    try:
+        return df.describe(include="all")
+    except Exception:
+        return pd.DataFrame()
 
 def generate_dataset_insight(df: pd.DataFrame):
     stats = safe_describe(df).reset_index().to_string()
@@ -118,7 +111,6 @@ def process_rag_files(uploaded_files):
 # UI Tabs
 # =====================
 st.set_page_config(page_title="📊 Data & Document Chatbot", layout="wide")
-
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
 # ====== MODE 1: Data Analysis ======
