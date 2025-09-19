@@ -99,6 +99,14 @@ def detect_data_types(df):
     num_cols = df.select_dtypes(include="number").columns.tolist()
     return cat_cols, num_cols
 
+def df_info_text(df: pd.DataFrame) -> str:
+    """Ringkasan dataset sederhana"""
+    info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
+    info += "Kolom:\n" + ", ".join(df.columns[:10])
+    if df.shape[1] > 10:
+        info += " ..."
+    return info
+
 def safe_describe(df):
     try:
         return df.describe(include="all")
