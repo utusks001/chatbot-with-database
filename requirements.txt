@@ -21,7 +21,7 @@ pandas
 numpy
 plotly
 # pytesseract
-pdfplumber
+# pdfplumber
 scikit-learn
 langchain-google-genai
 google-ai-generativelanguage
