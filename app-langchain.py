@@ -116,6 +116,7 @@ def process_rag_files(uploaded_files):
 # =====================
 # UI Tabs
 # =====================
+st.title("🤖 Chatbot — Data Analysis + RAG Advanced")
 st.set_page_config(page_title="📊 Data & Document Chatbot", layout="wide")
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
