@@ -1,27 +1,23 @@
 # app-langchain.py
 
-import streamlit as st 
+import streamlit as st  
 import pandas as pd
 import plotly.express as px
-import matplotlib.pyplot as plt
-import seaborn as sns
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.document_loaders import (
     PyPDFLoader,
     Docx2txtLoader,
     UnstructuredPowerPointLoader,
     TextLoader,
-    UnstructuredImageLoader,
 )
+from PIL import Image
 import tempfile, os
-
 
 # =====================
 # Init Session State
@@ -46,7 +42,6 @@ llm = load_llm()
 # Helpers
 # ======================
 def df_info_text(df: pd.DataFrame) -> str:
-    """Ringkasan dataset sederhana"""
     info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
     info += "Kolom:\n" + ", ".join(df.columns[:30])
     if df.shape[1] > 30:
@@ -80,6 +75,7 @@ def generate_dataset_insight(df: pd.DataFrame):
     return chain.invoke({"stats": stats}).content
 
 def load_document(file_path, file_type):
+    file_type = file_type.lower()
     if file_type == ".pdf":
         return PyPDFLoader(file_path).load()
     elif file_type == ".txt":
@@ -88,8 +84,12 @@ def load_document(file_path, file_type):
         return Docx2txtLoader(file_path).load()
     elif file_type in [".pptx", ".ppt"]:
         return UnstructuredPowerPointLoader(file_path).load()
-    elif file_type.lower() in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
-        return UnstructuredImageLoader(file_path).load()
+    elif file_type in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
+        try:
+            img = Image.open(file_path)
+            return [{"page_content": f"[Gambar: {os.path.basename(file_path)}] Ukuran: {img.size}"}]
+        except Exception:
+            return [{"page_content": f"[Gagal membaca gambar: {os.path.basename(file_path)}]"}]
     else:
         return []
 
@@ -111,13 +111,8 @@ def process_rag_files(uploaded_files):
 # =====================
 # UI Tabs
 # =====================
-
+st.set_page_config(page_title="📊 Data & Document Chatbot", layout="wide")
 st.title("🤖📊 Chatbot Dashboard : Data Analysis & Advanced RAG")
-st.set_page_config(
-    page_title="Chatbot Dashboard & Advanced RAG",
-    page_icon="🤖📊",
-    layout="wide"
-)
 
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
@@ -144,7 +139,6 @@ with tab1:
     if df is not None:
         st.dataframe(df.head(10))
         
-        # deteksi tipe kolom
         numeric_cols, categorical_cols, datetime_cols = detect_column_types(df)
         st.write(f"Kolom Numerik: {numeric_cols}")
         st.write(f"Kolom Kategorikal: {categorical_cols}")
@@ -153,7 +147,6 @@ with tab1:
         st.text(df_info_text(df))
         st.write(f"**Data shape:** {df.shape}")        
 
-        # dropdown axis
         st.subheader("⚙️ Pilih Kolom untuk Visualisasi")
         x_axis = st.selectbox("Kolom X Axis", df.columns)
         y_axis = st.selectbox("Kolom Y Axis", df.columns)
@@ -180,7 +173,6 @@ with tab1:
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-        # chatbot untuk insight
         st.subheader("💬 Chatbot Data Analysis")
         q = st.text_input("Tanyakan sesuatu tentang dataset")
         if q:
@@ -191,7 +183,9 @@ with tab1:
 
 # ====== MODE 2: RAG Advanced ======
 with tab2:
-    uploaded_files = st.file_uploader("Upload dokumen (PDF, DOCX, PPTX, TXT, JPG, PNG, dsb)", type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Upload dokumen (PDF, DOCX, PPTX, TXT, JPG, PNG, BMP, GIF)", 
+                                      type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif"], 
+                                      accept_multiple_files=True)
     if uploaded_files:
         st.session_state.vectorstore = process_rag_files(uploaded_files)
         st.success("✅ Dokumen berhasil diproses!")
