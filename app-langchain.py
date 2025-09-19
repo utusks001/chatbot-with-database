@@ -38,12 +38,12 @@ llm = load_llm()
 # Helpers
 # ======================
 def df_info_text(df: pd.DataFrame) -> str:
-    """Ringkasan dataset dalam teks."""
-    buf = []
-    buf.append(f"Dataset memiliki {df.shape[0]} baris dan {df.shape[1]} kolom.")
-    buf.append("Kolom: " + ", ".join(df.columns))
-    buf.append("5 baris pertama:\n" + str(df.head().to_dict(orient="records")))
-    return "\n".join(buf)
+    """Ringkasan dataset sederhana"""
+    info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
+    info += "Kolom:\n" + ", ".join(df.columns[:10])
+    if df.shape[1] > 10:
+        info += " ..."
+    return info
     
 def detect_data_types(df):
     cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
