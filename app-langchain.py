@@ -1,151 +1,170 @@
 # app-langchain.py
 
 import os
-import streamlit as st
+import tempfile
 import pandas as pd
+import streamlit as st
 import plotly.express as px
-from langchain.prompts import ChatPromptTemplate
-from langchain_groq import ChatGroq
+
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-    PyPDFLoader, Docx2txtLoader, TextLoader, UnstructuredPowerPointLoader, UnstructuredImageLoader
+from langchain.document_loaders import (
+    PyPDFLoader,
+    Docx2txtLoader,
+    UnstructuredPowerPointLoader,
+    TextLoader,
+    UnstructuredImageLoader,
 )
-from langchain_community.vectorstores import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.chains import RetrievalQA
 
-# ========== LLM LOADER ==========
+# ======================
+# LLM SETUP (Gemini + Groq fallback)
+# ======================
 def load_llm():
-    if os.getenv("GEMINI_API_KEY"):
-        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    elif os.getenv("GROQ_API_KEY"):
-        return ChatGroq(model="llama3-8b-8192", temperature=0)
-    else:
-        st.warning("⚠️ No LLM API key found. Using fallback mode.")
-        return None
+    try:
+        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+    except Exception:
+        return ChatGroq(model="llama-3.1-8b-instant", temperature=0.3)
 
 llm = load_llm()
 
-def detect_data_types(df):
-    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-    num_cols = df.select_dtypes(include="number").columns.tolist()
-    return cat_cols, num_cols
-
+# ======================
+# Helpers
+# ======================
 def df_info_text(df: pd.DataFrame) -> str:
-    """Ringkasan dataset sederhana"""
-    info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
-    info += "Kolom:\n" + ", ".join(df.columns[:10])
-    if df.shape[1] > 10:
-        info += " ..."
-    return info
+    """Ringkasan dataset dalam teks."""
+    buf = []
+    buf.append(f"Dataset memiliki {df.shape[0]} baris dan {df.shape[1]} kolom.")
+    buf.append("Kolom: " + ", ".join(df.columns))
+    buf.append("5 baris pertama:\n" + str(df.head().to_dict(orient="records")))
+    return "\n".join(buf)
 
-def safe_describe(df):
-    try:
-        return df.describe(include="all")
-    except Exception:
-        return pd.DataFrame()
+def generate_insight(df: pd.DataFrame):
+    """Gunakan LLM untuk insight natural."""
+    template = """
+    Kamu adalah asisten data analyst. Buat insight singkat dan kesimpulan dari dataset berikut:
 
-# ========== Streamlit CONFIG ==========
-st.set_page_config(page_title="📊 Data Analysis + 📚 RAG Chatbot", layout="wide")
-st.title("🤖 Chatbot: Data Analysis + RAG Advanced")
+    {info}
 
-tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
+    Jawab dengan ringkas dan natural.
+    """
+    prompt = PromptTemplate(input_variables=["info"], template=template)
+    chain = LLMChain(prompt=prompt, llm=llm)
+    return chain.run(info=df_info_text(df))
 
-# ========== TAB 1: DATA ANALYSIS ==========
-with tab1:
-    st.subheader("Upload Dataset")
-    file = st.file_uploader("Upload CSV/Excel", type=["csv", "xlsx"])
-    if file:
-        if file.name.endswith(".csv"):
-            df = pd.read_csv(file)
+def build_rag_qa(uploaded_files):
+    """RAG pipeline untuk dokumen + gambar"""
+    docs = []
+    for file in uploaded_files:
+        suffix = file.name.split(".")[-1].lower()
+        with tempfile.NamedTemporaryFile(delete=False, suffix="." + suffix) as tmp:
+            tmp.write(file.read())
+            tmp_path = tmp.name
+
+        if suffix == "pdf":
+            loader = PyPDFLoader(tmp_path)
+        elif suffix in ["docx"]:
+            loader = Docx2txtLoader(tmp_path)
+        elif suffix in ["pptx"]:
+            loader = UnstructuredPowerPointLoader(tmp_path)
+        elif suffix in ["txt", "csv", "md"]:
+            loader = TextLoader(tmp_path)
+        elif suffix in ["jpg", "jpeg", "png", "bmp", "jiff", "gif"]:
+            loader = UnstructuredImageLoader(tmp_path)
         else:
-            df = pd.read_excel(file)
+            continue
 
-        st.dataframe(df.head(10))
-        categorical_cols, numeric_cols = detect_data_types(df)
-        st.write(f"Kolom Numerik: {numeric_cols}")
-        st.write(f"Kolom Kategorikal: {categorical_cols}")
-        st.text(df_info_text(df))
-        st.write(f"**Data shape:** {df.shape}")
-        
-        # Dropdown for visualization
-        x_axis = st.selectbox("Pilih X-Axis", df.columns, index=0)
-        y_axis = st.selectbox("Pilih Y-Axis", df.columns, index=min(1, len(df.columns)-1))
+        docs.extend(loader.load())
 
-        q = st.text_input("💬 Tanya tentang dataset:")
-        if q:
-            if "trend" in q.lower():
-                fig = px.line(df, x=x_axis, y=y_axis, title=f"Trend {y_axis} vs {x_axis}")
+    if not docs:
+        return None
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_documents(docs)
+
+    embeddings = HuggingFaceEmbeddings()
+    vectordb = FAISS.from_documents(chunks, embeddings)
+    retriever = vectordb.as_retriever(search_kwargs={"k": 3})
+
+    return RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+
+# ======================
+# Streamlit UI
+# ======================
+st.set_page_config(page_title="📊 Data + RAG Chatbot", layout="wide")
+st.title("📊 Data Analysis + 📑 RAG Chatbot")
+
+tab1, tab2 = st.tabs(["📈 Data Analysis", "📑 RAG Advanced"])
+
+# ======================
+# TAB 1: Data Analysis
+# ======================
+with tab1:
+    uploaded_file = st.file_uploader("Unggah dataset (CSV atau Excel)", type=["csv", "xlsx"])
+    if uploaded_file:
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+
+            st.success("Dataset berhasil dimuat ✅")
+            st.dataframe(df.head())
+
+            # Pilihan X/Y untuk grafik
+            st.subheader("⚙️ Pilih Kolom untuk Visualisasi")
+            x_axis = st.selectbox("Kolom X Axis", df.columns, index=0)
+            y_axis = st.selectbox("Kolom Y Axis", df.columns, index=min(1, len(df.columns)-1))
+
+            # Tampilkan grafik otomatis
+            if x_axis and y_axis:
+                fig = px.line(df, x=x_axis, y=y_axis, title=f"📈 Grafik {y_axis} vs {x_axis}")
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Insight with LLM if available
-                if llm:
-                    prompt = ChatPromptTemplate.from_messages([
-                        ("system", "Kamu adalah analis data yang ringkas."),
-                        ("human", f"Buat insight ringkas dari tren {y_axis} terhadap {x_axis} pada dataset ini:\n{df[[x_axis,y_axis]].head(20)}")
-                    ])
-                    response = llm.invoke(prompt.format_messages())
-                    st.success(response.content)
+            # Chatbot Analysis
+            st.subheader("💬 Chatbot Data Analysis")
+            q = st.text_input("Ajukan pertanyaan tentang dataset:")
+            if q:
+                if any(k in q.lower() for k in ["statistik", "tren", "kategori", "ringkas", "insight", "kesimpulan"]):
+                    try:
+                        ans = generate_insight(df)
+                        st.info(ans)
+                    except Exception:
+                        st.warning("⚠️ Gagal membuat insight otomatis.")
                 else:
-                    st.info(f"ℹ️ {y_axis} meningkat/menurun terhadap {x_axis} berdasarkan grafik.")
-            elif "statistik" in q.lower() or "summary" in q.lower():
-                st.dataframe(df.describe(include="all"))
-            elif "insight" in q.lower() or "kesimpulan" in q.lower():
-                if llm:
-                    prompt = ChatPromptTemplate.from_messages([
-                        ("system", "Kamu adalah analis data."),
-                        ("human", f"Buat insight & kesimpulan utama dari dataset ini:\n{df.head(30)}")
-                    ])
-                    response = llm.invoke(prompt.format_messages())
-                    st.success(response.content)
-                else:
-                    st.info("Dataset menunjukkan pola tertentu, silakan analisis lebih lanjut.")
-            else:
-                st.write("📊 Statistik umum:")
-                st.dataframe(df.describe(include="all"))
+                    try:
+                        result = llm.invoke(q + "\nGunakan dataset berikut:\n" + df_info_text(df))
+                        st.info(result.content if hasattr(result, "content") else result)
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        except Exception as e:
+            st.error(f"Gagal membaca dataset: {e}")
 
-# ========== TAB 2: RAG ADVANCED ==========
+# ======================
+# TAB 2: RAG Advanced
+# ======================
 with tab2:
-    st.subheader("Upload Dokumen (TXT, PDF, DOCX, PPTX, Gambar)")
-    rag_file = st.file_uploader("Upload file untuk RAG", type=["txt", "pdf", "docx", "pptx", "jpg", "png", "bmp", "gif", "tiff"])
-
-    if rag_file:
-        file_path = os.path.join("temp", rag_file.name)
-        os.makedirs("temp", exist_ok=True)
-        with open(file_path, "wb") as f:
-            f.write(rag_file.read())
-
-        # Loader sesuai tipe file
-        if rag_file.name.endswith(".pdf"):
-            loader = PyPDFLoader(file_path)
-        elif rag_file.name.endswith(".docx"):
-            loader = Docx2txtLoader(file_path)
-        elif rag_file.name.endswith(".pptx"):
-            loader = UnstructuredPowerPointLoader(file_path)
-        elif rag_file.name.endswith((".jpg",".png",".bmp",".gif",".tiff")):
-            loader = UnstructuredImageLoader(file_path)
+    uploaded_docs = st.file_uploader(
+        "Unggah dokumen (TXT, PDF, DOCX, PPTX, JPG, PNG, BMP, JIFF, GIF)", 
+        type=["txt", "pdf", "docx", "pptx", "jpg", "jpeg", "png", "bmp", "jiff", "gif"], 
+        accept_multiple_files=True
+    )
+    if uploaded_docs:
+        qa = build_rag_qa(uploaded_docs)
+        if qa:
+            st.success("Dokumen berhasil diproses ✅")
+            query = st.text_input("Tanyakan sesuatu dari dokumen:")
+            if query:
+                try:
+                    ans = qa.run(query)
+                    st.info(ans)
+                except Exception as e:
+                    st.error(f"Error QA: {e}")
         else:
-            loader = TextLoader(file_path)
-
-        docs = loader.load()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.split_documents(docs)
-
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        vectorstore = FAISS.from_documents(chunks, embeddings)
-
-        q2 = st.text_input("💬 Tanya tentang dokumen:")
-        if q2:
-            results = vectorstore.similarity_search(q2, k=3)
-            context = "\n\n".join([r.page_content for r in results])
-
-            if llm:
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", "Kamu adalah asisten RAG yang menjawab berdasarkan dokumen."),
-                    ("human", f"Pertanyaan: {q2}\n\nKonteks:\n{context}")
-                ])
-                response = llm.invoke(prompt.format_messages())
-                st.success(response.content)
-            else:
-                st.info("⚠️ Tidak ada LLM API key. Jawaban tidak tersedia.")
+            st.warning("❌ Tidak ada dokumen yang valid.")
