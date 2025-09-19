@@ -98,7 +98,13 @@ def process_rag_files(uploaded_files):
 # =====================
 # Streamlit UI
 # =====================
-st.set_page_config(page_title="🤖📊 Chatbot Dashboard", layout="wide")
+st.title("🤖📊 Chatbot Dashboard : Data Analysis & Advanced RAG")
+st.set_page_config(
+    page_title="Chatbot Dashboard & Advanced RAG",
+    page_icon="🤖📊",
+    layout="wide"
+)
+
 tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
 # ====== Data Analysis ======
