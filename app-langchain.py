@@ -112,9 +112,9 @@ def process_rag_files(uploaded_files):
 # UI Tabs
 # =====================
 
-st.title("🤖📊 AI Chatbot Dashboard for Data Analysis and Advanced RAG")
+st.title("🤖📊 Chatbot Dashboard : Data Analysis & Advanced RAG")
 st.set_page_config(
-    page_title="AI Chatbot Dashboard and Advanced RAG",
+    page_title="Chatbot Dashboard & Advanced RAG",
     page_icon="🤖📊",
     layout="wide"
 )
