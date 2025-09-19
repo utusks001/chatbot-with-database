@@ -109,6 +109,11 @@ def df_info_text(df):
     df.info(buf=buffer)
     return buffer.getvalue()
 
+def detect_data_types(df):
+    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    return cat_cols, num_cols
+
 # ================= Tabs =================
 tab1, tab2 = st.tabs(["📊 Data Analysis", "📚 RAG Advanced"])
 
