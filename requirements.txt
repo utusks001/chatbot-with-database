@@ -19,8 +19,8 @@ matplotlib
 seaborn
 pandas
 numpy
-plotly
-# pytesseract
+# plotly
+pytesseract
 # pdfplumber
 scikit-learn
 langchain-google-genai
