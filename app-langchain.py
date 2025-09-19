@@ -44,7 +44,18 @@ def df_info_text(df: pd.DataFrame) -> str:
     buf.append("Kolom: " + ", ".join(df.columns))
     buf.append("5 baris pertama:\n" + str(df.head().to_dict(orient="records")))
     return "\n".join(buf)
+    
+def detect_data_types(df):
+    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    return cat_cols, num_cols
 
+def safe_describe(df):
+    try:
+        return df.describe(include="all")
+    except Exception:
+        return pd.DataFrame()
+        
 def generate_insight(df: pd.DataFrame):
     """Gunakan LLM untuk insight natural."""
     template = """
@@ -115,7 +126,12 @@ with tab1:
                 df = pd.read_excel(uploaded_file)
 
             st.success("Dataset berhasil dimuat ✅")
-            st.dataframe(df.head())
+            st.dataframe(df.head(10))
+            categorical_cols, numeric_cols = detect_data_types(df)
+            st.write(f"Kolom Numerik: {numeric_cols}")
+            st.write(f"Kolom Kategorikal: {categorical_cols}")
+            st.text(df_info_text(df))
+            st.write(f"**Data shape:** {df.shape}")            
 
             # Pilihan X/Y untuk grafik
             st.subheader("⚙️ Pilih Kolom untuk Visualisasi")
