@@ -158,8 +158,20 @@ with tab1:
                     df_list.append(temp)
                 df = pd.concat(df_list, ignore_index=True)
 
-            st.dataframe(df.head(10))
             st.session_state.active_df = df
+            st.dataframe(df.head(10))
+            categorical_cols, numeric_cols = detect_data_types(df)
+            st.write(f"Kolom Numerik: {numeric_cols}")
+            st.write(f"Kolom Kategorikal: {categorical_cols}")
+            st.text(df_info_text(df))
+            st.write(f"**Data shape:** {df.shape}")
+            st.dataframe(safe_describe(df))
+
+            if not df.select_dtypes(include="number").empty:
+                fig, ax = plt.subplots(figsize=(6, 4))
+                sns.heatmap(df.select_dtypes(include="number").corr(), annot=True, cmap="coolwarm", ax=ax)
+                st.pyplot(fig)
+            
 
 # ====== MODE 2: RAG Advanced ======
 with tab2:
