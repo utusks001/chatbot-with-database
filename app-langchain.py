@@ -16,8 +16,8 @@ from langchain.document_loaders import (
     UnstructuredPowerPointLoader,
     TextLoader,
 )
-from langchain.schema import Document
-import tempfile, os, requests
+from PIL import Image
+import requests, tempfile, os, io
 
 # =====================
 # Init Session State
@@ -26,8 +26,6 @@ if "dfs" not in st.session_state:
     st.session_state.dfs = {}
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
-
-OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY")
 
 # ======================
 # LLM SETUP (Gemini + Groq fallback)
@@ -64,39 +62,37 @@ def safe_describe(df):
 
 def generate_dataset_insight(df: pd.DataFrame, question: str = None):
     stats = safe_describe(df).reset_index().to_string()
+    prompt_template = """
+Kamu adalah analis data. Berdasarkan dataset berikut:
+{stats}
+{question_section}
+Buatkan jawaban atau insight yang relevan secara akurat, jelas dan mudah dipahami.
+Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+"""
     question_section = f"Pertanyaan: {question}" if question else ""
-    prompt_template = f"""
-    Kamu adalah analis data. Berdasarkan dataset berikut:
-    {stats}
-    {question_section}
-    Buatkan jawaban atau insight yang relevan secara akurat, jelas dan mudah dipahami.
-    Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-    """
     prompt = ChatPromptTemplate.from_template(prompt_template)
     chain = prompt | llm
-    return chain.invoke({}).content
+    return chain.invoke({"stats": stats, "question_section": question_section}).content
 
 # ======================
-# OCR for images
+# OCR.Space helper
 # ======================
-def ocr_image(file_path):
-    with open(file_path, "rb") as f:
-        r = requests.post(
-            "https://api.ocr.space/parse/image",
-            files={"file": f},
-            data={"apikey": OCR_SPACE_API_KEY, "language": "eng"}
-        )
-    result = r.json()
-    text = ""
+OCR_API_KEY = st.secrets.get("OCR_SPACE_API_KEY")  # harus ada di .env / st.secrets
+
+def ocr_space_image(image_bytes):
+    """Extract text from image using OCR.Space API"""
+    url_api = "https://api.ocr.space/parse/image"
+    response = requests.post(
+        url_api,
+        files={"filename": image_bytes},
+        data={"apikey": OCR_API_KEY, "OCREngine": "2"},
+    )
+    result = response.json()
     try:
-        text = result['ParsedResults'][0]['ParsedText']
-    except:
-        text = ""
-    return text
+        return "\n".join([r["ParsedText"] for r in result["ParsedResults"] if r["ParsedText"]])
+    except Exception:
+        return ""
 
-# ======================
-# Document loader
-# ======================
 def load_document(file_path, file_type):
     if file_type == ".pdf":
         return PyPDFLoader(file_path).load()
@@ -107,8 +103,9 @@ def load_document(file_path, file_type):
     elif file_type in [".pptx", ".ppt"]:
         return UnstructuredPowerPointLoader(file_path).load()
     elif file_type.lower() in [".jpg", ".jpeg", ".png", ".bmp", ".gif"]:
-        text = ocr_image(file_path)
-        return [Document(page_content=text)]
+        with open(file_path, "rb") as f:
+            text = ocr_space_image(f)
+        return [{"page_content": text}]
     else:
         return []
 
@@ -120,8 +117,10 @@ def process_rag_files(uploaded_files):
             tmp.write(uploaded_file.read())
             tmp_path = tmp.name
         docs.extend(load_document(tmp_path, suffix))
+
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     docs_split = splitter.split_documents(docs)
+
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return FAISS.from_documents(docs_split, embeddings)
 
@@ -137,6 +136,7 @@ tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 with tab1:
     uploaded_file = st.file_uploader("Upload file Excel/CSV untuk analisa data", type=["csv", "xls", "xlsx"])
     df = None
+
     if uploaded_file:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
@@ -151,6 +151,7 @@ with tab1:
                     temp["SheetName"] = s
                     df_list.append(temp)
                 df = pd.concat(df_list, ignore_index=True)
+
     if df is not None:
         st.dataframe(df.head(10))
         numeric_cols, categorical_cols, datetime_cols = detect_column_types(df)
@@ -198,7 +199,6 @@ with tab2:
         type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif"],
         accept_multiple_files=True
     )
-
     if uploaded_files:
         st.write("📄 File yang diupload:")
         for f in uploaded_files:
@@ -206,7 +206,7 @@ with tab2:
 
         if st.button("Proses Semua File ke Vectorstore"):
             st.session_state.vectorstore = process_rag_files(uploaded_files)
-            st.success("✅ Semua file berhasil diproses dan siap digunakan oleh Chatbot.")
+            st.success("✅ Semua dokumen berhasil diproses ke Vectorstore!")
 
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen")
@@ -214,13 +214,14 @@ with tab2:
         retriever = st.session_state.vectorstore.as_retriever()
         docs = retriever.get_relevant_documents(q2)
         context = "\n".join([d.page_content for d in docs[:3]])
-        prompt_template = f"""
-        Jawab pertanyaan berikut secara akurat, jelas dan ringkas berdasarkan dokumen konteks.
-        Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-        Pertanyaan: {q2}
-        Konteks: {context}
-        Jawaban ringkas:
-        """
+
+        prompt_template = """
+Jawab pertanyaan berikut secara akurat, jelas dan ringkas berdasarkan dokumen konteks.
+Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+Pertanyaan: {q}
+Konteks: {context}
+Jawaban ringkas:
+"""
         prompt = ChatPromptTemplate.from_template(prompt_template)
         chain = prompt | llm
-        st.write(chain.invoke({}).content)
+        st.write(chain.invoke({"q": q2, "context": context}).content)
