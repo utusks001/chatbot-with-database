@@ -1,3 +1,4 @@
+xlrd==1.2.0   # untuk .xls (versi baru xlrd drop dukungan xlsx)
 openpyxl
 langchain
 langchain-community
