@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 import seaborn as sns
 import matplotlib.pyplot as plt
-import io
+import numpy as np
 
 from PyPDF2 import PdfReader
 from pathlib import Path
@@ -169,8 +169,8 @@ if user_query:
             query_lower = user_query.lower()
 
             if "statistik" in query_lower or "describe" in query_lower:
-                desc = df.describe(include="all").fillna("").to_dict()
-                response = f"📊 Statistik dasar data:\n\n{desc}"
+                st.dataframe(df.describe(include="all"))
+                response = "📊 Statistik dasar data ditampilkan."
 
             elif "heatmap" in query_lower or "korelasi" in query_lower:
                 corr = df.corr(numeric_only=True)
@@ -180,7 +180,7 @@ if user_query:
                 response = "🔥 Heatmap korelasi antar kolom numerik ditampilkan."
 
             elif "trend" in query_lower or "grafik" in query_lower:
-                num_cols = df.select_dtypes(include="number").columns
+                num_cols = df.select_dtypes(include=np.number).columns
                 date_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
                 if date_cols:
                     col_x = date_cols[0]
@@ -197,9 +197,30 @@ if user_query:
                 else:
                     response = "⚠️ Tidak ada kolom numerik untuk membuat grafik trend."
 
+            elif "kategori" in query_lower:
+                cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+                if not cat_cols:
+                    response = "⚠️ Tidak ada kolom kategori di dataset ini."
+                elif len(cat_cols) == 1:
+                    col = cat_cols[0]
+                    fig = px.bar(df[col].value_counts().reset_index(),
+                                 x="index", y=col,
+                                 labels={"index": col, col: "Jumlah"},
+                                 title=f"Distribusi {col}")
+                    st.plotly_chart(fig, use_container_width=True)
+                    response = f"📊 Grafik kategori otomatis untuk kolom **{col}**."
+                else:
+                    col = st.selectbox("Pilih kolom kategori:", cat_cols, key="cat_select")
+                    if col:
+                        fig = px.bar(df[col].value_counts().reset_index(),
+                                     x="index", y=col,
+                                     labels={"index": col, col: "Jumlah"},
+                                     title=f"Distribusi {col}")
+                        st.plotly_chart(fig, use_container_width=True)
+                        response = f"📊 Grafik kategori berdasarkan pilihan kolom **{col}**."
+
             else:
-                # Jawaban berbasis analisis sederhana
-                response = f"🔍 Saya menemukan {df.shape[0]} baris dan {df.shape[1]} kolom. Kolom: {', '.join(df.columns[:10])}"
+                response = f"🔍 Dataset dengan {df.shape[0]} baris dan {df.shape[1]} kolom. Kolom: {', '.join(df.columns[:10])}"
 
     # ========== RAG Advanced ==========
     elif st.session_state.active_tab == "RAG Advanced":
