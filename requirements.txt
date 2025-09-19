@@ -30,6 +30,8 @@ openpyxl
 python-dotenv
 toml
 # streamlit
+PIL
+plotly
 pandas
 matplotlib
 seaborn
@@ -42,6 +44,7 @@ langchain
 sentence-transformers
 faiss-cpu
 transformers
+pathlib
 torch
 # 
 # 
