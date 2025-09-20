@@ -24,10 +24,21 @@ from langchain.document_loaders import (
 # =====================
 # Fix NLTK punkt untuk Streamlit Cloud
 # =====================
+
+# Pastikan direktori NLTK di Streamlit Cloud writable
+nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
+if not os.path.exists(nltk_data_dir):
+    os.makedirs(nltk_data_dir)
+
+# Tambahkan path ke NLTK
+nltk.data.path.append(nltk_data_dir)
+
+# Download punkt jika belum ada
 try:
     nltk.data.find("tokenizers/punkt")
 except LookupError:
-    nltk.download("punkt")
+    nltk.download("punkt", download_dir=nltk_data_dir)
+
 
 # =====================
 # Session State Init
