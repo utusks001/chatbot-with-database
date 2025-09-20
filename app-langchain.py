@@ -6,12 +6,6 @@ import plotly.express as px
 import os, tempfile, requests
 import nltk
 
-# Download punkt jika belum ada
-try:
-    nltk.data.find("tokenizers/punkt")
-except LookupError:
-    nltk.download("punkt")
-
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
@@ -26,6 +20,14 @@ from langchain.document_loaders import (
     UnstructuredPowerPointLoader,
     TextLoader,
 )
+
+# =====================
+# Fix NLTK punkt untuk Streamlit Cloud
+# =====================
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt")
 
 # =====================
 # Session State Init
@@ -90,7 +92,6 @@ Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang dibe
 OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
 
 def ocr_space(file_path):
-    """OCR menggunakan OCR.Space API"""
     with open(file_path, "rb") as f:
         r = requests.post(
             "https://api.ocr.space/parse/image",
