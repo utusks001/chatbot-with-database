@@ -202,7 +202,7 @@ with tab1:
         if q:
             st.write(generate_dataset_insight(df, question=q))
 
-# ====== RAG Advanced ======
+# ===== RAG Advanced =====
 with tab2:
     uploaded_files = st.file_uploader(
         "Upload dokumen PDF/DOCX/PPTX/TXT/Gambar (OCR)",
@@ -227,10 +227,11 @@ with tab2:
                     st.session_state.vectorstore = vs
                     st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(st.session_state.uploaded_rag_files)} | Total chunk: {len(docs)}")
 
+    # Chatbot RAG
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen", key="rag_question")
     if q2 and st.session_state.vectorstore:
-        retriever = st.session_state.vectorstore.as_retriever()
+        retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k":10})  # ambil semua chunk relevan
         docs = retriever.get_relevant_documents(q2)
         if not docs:
             st.warning("❌ Tidak ada teks relevan dari dokumen untuk pertanyaan ini.")
