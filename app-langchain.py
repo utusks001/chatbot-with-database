@@ -1,25 +1,12 @@
 # app-langchain.py
 
 import streamlit as st
+import os
+import nltk
 import pandas as pd
 import plotly.express as px
-import os
 import tempfile
 import requests
-import nltk
-
-# =====================
-# Fix NLTK punkt untuk Streamlit Cloud
-# =====================
-nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
-if not os.path.exists(nltk_data_dir):
-    os.makedirs(nltk_data_dir)
-nltk.data.path.append(nltk_data_dir)
-try:
-    nltk.data.find("tokenizers/punkt")
-except LookupError:
-    nltk.download("punkt", download_dir=nltk_data_dir)
-
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
@@ -36,7 +23,18 @@ from langchain.document_loaders import (
 )
 
 # =====================
-# Session State Init
+# FIX NLTK punkt untuk Streamlit Cloud
+# =====================
+nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
+os.makedirs(nltk_data_dir, exist_ok=True)
+nltk.data.path.append(nltk_data_dir)
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt", download_dir=nltk_data_dir)
+
+# =====================
+# SESSION STATE INIT
 # =====================
 if "dfs" not in st.session_state:
     st.session_state.dfs = {}
@@ -57,7 +55,7 @@ def load_llm():
 llm = load_llm()
 
 # =====================
-# Helpers Data Analysis
+# Data Analysis Helpers
 # =====================
 def df_info_text(df: pd.DataFrame) -> str:
     info = f"Baris: {df.shape[0]}, Kolom: {df.shape[1]}\n"
@@ -93,12 +91,11 @@ def generate_dataset_insight(df: pd.DataFrame, question: str = None):
     return chain.invoke({}).content
 
 # =====================
-# Helpers RAG
+# OCR Helper
 # =====================
 OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
 
 def ocr_space(file_path):
-    """OCR menggunakan OCR.Space API"""
     with open(file_path, "rb") as f:
         r = requests.post(
             "https://api.ocr.space/parse/image",
@@ -114,6 +111,9 @@ def ocr_space(file_path):
     except:
         return ""
 
+# =====================
+# Document Loaders
+# =====================
 def load_document(file_path, file_type):
     if file_type == ".pdf":
         return PyPDFLoader(file_path).load()
@@ -125,10 +125,7 @@ def load_document(file_path, file_type):
         return UnstructuredPowerPointLoader(file_path).load()
     elif file_type.lower() in [".jpg",".jpeg",".png",".bmp",".gif"]:
         text = ocr_space(file_path)
-        if text.strip():
-            return [Document(page_content=text)]
-        else:
-            return []
+        return [Document(page_content=text)] if text.strip() else []
     else:
         return []
 
@@ -230,7 +227,6 @@ with tab2:
                     st.session_state.vectorstore = vs
                     st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(st.session_state.uploaded_rag_files)} | Total chunk: {len(docs)}")
 
-    # Chatbot RAG
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen", key="rag_question")
     if q2 and st.session_state.vectorstore:
