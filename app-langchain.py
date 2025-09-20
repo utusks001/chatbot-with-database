@@ -3,8 +3,22 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os, tempfile, requests
+import os
+import tempfile
+import requests
 import nltk
+
+# =====================
+# Fix NLTK punkt untuk Streamlit Cloud
+# =====================
+nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
+if not os.path.exists(nltk_data_dir):
+    os.makedirs(nltk_data_dir)
+nltk.data.path.append(nltk_data_dir)
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt", download_dir=nltk_data_dir)
 
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -20,25 +34,6 @@ from langchain.document_loaders import (
     UnstructuredPowerPointLoader,
     TextLoader,
 )
-
-# =====================
-# Fix NLTK punkt untuk Streamlit Cloud
-# =====================
-
-# Pastikan direktori NLTK di Streamlit Cloud writable
-nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
-if not os.path.exists(nltk_data_dir):
-    os.makedirs(nltk_data_dir)
-
-# Tambahkan path ke NLTK
-nltk.data.path.append(nltk_data_dir)
-
-# Download punkt jika belum ada
-try:
-    nltk.data.find("tokenizers/punkt")
-except LookupError:
-    nltk.download("punkt", download_dir=nltk_data_dir)
-
 
 # =====================
 # Session State Init
@@ -87,12 +82,12 @@ def generate_dataset_insight(df: pd.DataFrame, question: str = None):
     stats = safe_describe(df).reset_index().to_string()
     question_section = f"Pertanyaan: {question}" if question else ""
     prompt_template = f"""
-Kamu adalah analis data. Berdasarkan dataset berikut:
-{stats}
-{question_section}
-Buat jawaban atau insight yang relevan secara jelas, ringkas, dan natural.
-Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-"""
+    Kamu adalah analis data. Berdasarkan dataset berikut:
+    {stats}
+    {question_section}
+    Buat jawaban atau insight yang relevan secara jelas, ringkas, dan natural.
+    Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+    """
     prompt = ChatPromptTemplate.from_template(prompt_template)
     chain = prompt | llm
     return chain.invoke({}).content
@@ -103,6 +98,7 @@ Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang dibe
 OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
 
 def ocr_space(file_path):
+    """OCR menggunakan OCR.Space API"""
     with open(file_path, "rb") as f:
         r = requests.post(
             "https://api.ocr.space/parse/image",
@@ -234,6 +230,7 @@ with tab2:
                     st.session_state.vectorstore = vs
                     st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(st.session_state.uploaded_rag_files)} | Total chunk: {len(docs)}")
 
+    # Chatbot RAG
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen", key="rag_question")
     if q2 and st.session_state.vectorstore:
@@ -244,13 +241,13 @@ with tab2:
         else:
             context = "\n\n".join([d.page_content for d in docs])
             prompt = ChatPromptTemplate.from_template(f"""
-Kamu adalah asisten ahli yang membantu menjawab pertanyaan berdasarkan dokumen.
-Berdasarkan konteks dokumen berikut:
-{{context}}
-Jawab pertanyaan secara akurat, detil, rinci, jelas, ringkas, dan natural.
-Jika jawaban tidak eksplisit dalam dokumen, katakan: "Jawaban tidak tersedia dalam konteks dokumen".
-Pertanyaan: {{q}}
-""")
+            Kamu adalah asisten ahli yang membantu menjawab pertanyaan berdasarkan dokumen.
+            Berdasarkan konteks dokumen berikut:
+            {{context}}
+            Jawab pertanyaan secara akurat, detil, rinci, jelas, ringkas, dan natural.
+            Jika jawaban tidak eksplisit dalam dokumen, katakan: "Jawaban tidak tersedia dalam konteks dokumen".
+            Pertanyaan: {{q}}
+            """)
             chain = prompt | llm
             jawaban = chain.invoke({"q": q2, "context": context}).content.strip()
             st.write(jawaban)
