@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os, tempfile, requests
-from pptx import Presentation
+
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
@@ -13,7 +13,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
+from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader, TextLoader
 
 # =====================
 # Session State Init
@@ -26,7 +26,7 @@ if "uploaded_rag_files" not in st.session_state:
     st.session_state.uploaded_rag_files = []
 
 # =====================
-# LLM SETUP
+# LLM Setup (Gemini/Groq fallback)
 # =====================
 def load_llm():
     try:
@@ -37,7 +37,7 @@ def load_llm():
 llm = load_llm()
 
 # =====================
-# Data Analysis Helpers
+# Helpers Data Analysis
 # =====================
 def df_info_text(df: pd.DataFrame) -> str:
     info = f"Rows: {df.shape[0]}, Columns: {df.shape[1]}\n"
@@ -62,18 +62,18 @@ def generate_dataset_insight(df: pd.DataFrame, question: str = None):
     stats = safe_describe(df).reset_index().to_string()
     question_section = f"Question: {question}" if question else ""
     prompt_template = f"""
-    You are a data analyst. Based on the dataset stats below:
+    You are a data analyst. Based on the following dataset:
     {stats}
     {question_section}
-    Provide a clear, concise, and natural insight or answer.
-    If answer is not available, say: "Answer not available in the provided context."
+    Provide clear, concise, natural insights or answers.
+    If not available, respond: "Answer not available in dataset context."
     """
     prompt = ChatPromptTemplate.from_template(prompt_template)
     chain = prompt | llm
     return chain.invoke({}).content
 
 # =====================
-# OCR Helper
+# Helpers RAG
 # =====================
 OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
 
@@ -94,16 +94,7 @@ def ocr_space(file_path):
     except:
         return ""
 
-# =====================
-# Document Loaders (without NLTK)
-# =====================
-def load_pptx(file_path):
-    prs = Presentation(file_path)
-    text = "\n".join([shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text")])
-    return [Document(page_content=text)]
-
 def load_document(file_path, file_type):
-    file_type = file_type.lower()
     if file_type == ".pdf":
         return PyPDFLoader(file_path).load()
     elif file_type == ".txt":
@@ -111,8 +102,8 @@ def load_document(file_path, file_type):
     elif file_type == ".docx":
         return Docx2txtLoader(file_path).load()
     elif file_type in [".pptx", ".ppt"]:
-        return load_pptx(file_path)
-    elif file_type in [".jpg",".jpeg",".png",".bmp",".gif"]:
+        return UnstructuredPowerPointLoader(file_path).load()
+    elif file_type.lower() in [".jpg",".jpeg",".png",".bmp",".gif"]:
         text = ocr_space(file_path)
         if text.strip():
             return [Document(page_content=text)]
@@ -133,7 +124,7 @@ def process_rag_files(uploaded_files):
     return splitter.split_documents(docs)
 
 # =====================
-# UI
+# Streamlit UI
 # =====================
 st.set_page_config(page_title="🤖📊 Data & Document Chatbot", layout="wide")
 st.title("🤖📊 Chatbot Dashboard: Data Analysis & Advanced RAG")
@@ -142,7 +133,7 @@ tab1, tab2 = st.tabs(["📈 Data Analysis", "📚 RAG Advanced"])
 
 # ====== Data Analysis ======
 with tab1:
-    uploaded_file = st.file_uploader("Upload CSV/Excel for analysis", type=["csv","xls","xlsx"])
+    uploaded_file = st.file_uploader("Upload Excel/CSV for analysis", type=["csv","xls","xlsx"])
     df = None
     if uploaded_file:
         if uploaded_file.name.endswith(".csv"):
@@ -161,44 +152,48 @@ with tab1:
     if df is not None:
         st.dataframe(df.head(10))
         numeric_cols, categorical_cols, datetime_cols = detect_column_types(df)
-        st.write(f"Numeric: {numeric_cols}")
-        st.write(f"Categorical: {categorical_cols}")
-        st.write(f"Datetime: {datetime_cols}")
+        st.write(f"Numeric Columns: {numeric_cols}")
+        st.write(f"Categorical Columns: {categorical_cols}")
+        st.write(f"Datetime Columns: {datetime_cols}")
         st.text(df_info_text(df))
-        st.write(f"**Data shape:** {df.shape}")        
+        st.write(f"**Data shape:** {df.shape}")
 
         st.subheader("⚙️ Select Columns for Visualization")
         x_axis = st.selectbox("X Axis", df.columns)
         y_axis = st.selectbox("Y Axis", df.columns)
         if x_axis and y_axis:
-            x_is_num = x_axis in numeric_cols or x_axis in datetime_cols
-            y_is_num = y_axis in numeric_cols
-            x_is_cat = x_axis in categorical_cols
-            y_is_cat = y_axis in categorical_cols
             fig = None
-            if x_is_num and y_is_num:
-                fig = px.scatter(df, x=x_axis, y=y_axis, title=f"📈 Scatter {y_axis} vs {x_axis}")
-            elif x_axis in datetime_cols and y_is_num:
-                fig = px.line(df, x=x_axis, y=y_axis, title=f"📈 Trend {y_axis} vs {x_axis}")
-            elif x_is_cat and y_is_num:
-                fig = px.bar(df, x=x_axis, y=y_axis, title=f"📊 Bar {y_axis} per {x_axis}")
-            elif x_is_num and y_is_cat:
-                fig = px.bar(df, x=y_axis, y=x_axis, title=f"📊 Bar {x_axis} per {y_axis}")
-            elif x_is_cat and y_is_cat:
+            if x_axis in numeric_cols and y_axis in numeric_cols:
+                fig = px.scatter(df, x=x_axis, y=y_axis, title=f"Scatter {y_axis} vs {x_axis}")
+            elif x_axis in datetime_cols and y_axis in numeric_cols:
+                fig = px.line(df, x=x_axis, y=y_axis, title=f"Trend {y_axis} vs {x_axis}")
+            elif x_axis in categorical_cols and y_axis in numeric_cols:
+                fig = px.bar(df, x=x_axis, y=y_axis, title=f"Bar {y_axis} per {x_axis}")
+            elif x_axis in numeric_cols and y_axis in categorical_cols:
+                fig = px.bar(df, x=y_axis, y=x_axis, title=f"Bar {x_axis} per {y_axis}")
+            elif x_axis in categorical_cols and y_axis in categorical_cols:
                 crosstab = pd.crosstab(df[x_axis], df[y_axis])
-                fig = px.imshow(crosstab, title=f"🔢 Frequency {x_axis} vs {y_axis}")
+                fig = px.imshow(crosstab, title=f"Frequency {x_axis} vs {y_axis}")
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("💬 Chatbot Data Analysis")
-        q = st.text_input("Ask about dataset")
+        q = st.text_input("Ask a question about the dataset")
         if q:
             st.write(generate_dataset_insight(df, question=q))
 
 # ====== RAG Advanced ======
 with tab2:
+    st.subheader("📚 RAG Advanced - Multi-file & OCR")
+
+    # Reset Vectorstore button
+    if st.button("🗑️ Reset Vectorstore"):
+        st.session_state.vectorstore = None
+        st.session_state.uploaded_rag_files = []
+        st.success("✅ Vectorstore reset. Upload new files.")
+
     uploaded_files = st.file_uploader(
-        "Upload PDF/DOCX/PPTX/TXT/Image (OCR)",
+        "Upload PDF/DOCX/PPTX/TXT/Image",
         type=["pdf","docx","pptx","txt","jpg","jpeg","png","bmp","gif"],
         accept_multiple_files=True
     )
@@ -213,7 +208,7 @@ with tab2:
             with st.spinner("📦 Processing documents..."):
                 docs = process_rag_files(st.session_state.uploaded_rag_files)
                 if docs:
-                    embeddings = HuggingFaceEmbeddings()
+                    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
                     st.session_state.vectorstore = FAISS.from_documents(docs, embeddings)
                     st.success(f"✅ Documents processed: {len(docs)} chunks")
                 else:
