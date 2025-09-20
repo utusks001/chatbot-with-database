@@ -4,6 +4,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os, tempfile, requests
+import nltk
+nltk.download("punkt", quiet=True)  # <- penting untuk Unstructured loader PPTX
+
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
@@ -66,12 +69,12 @@ def generate_dataset_insight(df: pd.DataFrame, question: str = None):
     stats = safe_describe(df).reset_index().to_string()
     question_section = f"Pertanyaan: {question}" if question else ""
     prompt_template = f"""
-    Kamu adalah analis data. Berdasarkan dataset berikut:
-    {stats}
-    {question_section}
-    Buat jawaban atau insight yang relevan secara jelas, ringkas, dan natural.
-    Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
-    """
+Kamu adalah analis data. Berdasarkan dataset berikut:
+{stats}
+{question_section}
+Buat jawaban atau insight yang relevan secara jelas, ringkas, dan natural.
+Jika jawaban tidak ada, katakan: "Jawaban tidak tersedia dalam konteks yang diberikan"
+"""
     prompt = ChatPromptTemplate.from_template(prompt_template)
     chain = prompt | llm
     return chain.invoke({}).content
@@ -197,7 +200,6 @@ with tab2:
         accept_multiple_files=True
     )
     if uploaded_files:
-        # tampung dulu, proses nanti
         st.session_state.uploaded_rag_files = uploaded_files
         st.write("📄 File terupload:")
         for f in uploaded_files:
@@ -215,7 +217,6 @@ with tab2:
                     st.session_state.vectorstore = vs
                     st.success(f"✅ Vectorstore terbangun. Total dokumen: {len(st.session_state.uploaded_rag_files)} | Total chunk: {len(docs)}")
 
-    # Chatbot RAG
     st.subheader("💬 Chatbot RAG")
     q2 = st.text_input("Tanyakan sesuatu tentang dokumen", key="rag_question")
     if q2 and st.session_state.vectorstore:
@@ -226,13 +227,13 @@ with tab2:
         else:
             context = "\n\n".join([d.page_content for d in docs])
             prompt = ChatPromptTemplate.from_template(f"""
-            Kamu adalah asisten ahli yang membantu menjawab pertanyaan berdasarkan dokumen.
-            Berdasarkan konteks dokumen berikut:
-            {{context}}
-            Jawab pertanyaan secara akurat, detil, rinci, jelas, ringkas, dan natural.
-            Jika jawaban tidak eksplisit dalam dokumen, katakan: "Jawaban tidak tersedia dalam konteks dokumen".
-            Pertanyaan: {{q}}
-            """)
+Kamu adalah asisten ahli yang membantu menjawab pertanyaan berdasarkan dokumen.
+Berdasarkan konteks dokumen berikut:
+{{context}}
+Jawab pertanyaan secara akurat, detil, rinci, jelas, ringkas, dan natural.
+Jika jawaban tidak eksplisit dalam dokumen, katakan: "Jawaban tidak tersedia dalam konteks dokumen".
+Pertanyaan: {{q}}
+""")
             chain = prompt | llm
             jawaban = chain.invoke({"q": q2, "context": context}).content.strip()
             st.write(jawaban)
