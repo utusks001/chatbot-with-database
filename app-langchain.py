@@ -5,7 +5,12 @@ import pandas as pd
 import plotly.express as px
 import os, tempfile, requests
 import nltk
-nltk.download("punkt", quiet=True)  # <- penting untuk Unstructured loader PPTX
+
+# Download punkt jika belum ada
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt")
 
 from langchain.chains import LLMChain
 from langchain_google_genai import ChatGoogleGenerativeAI
